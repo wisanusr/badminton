@@ -1,0 +1,1356 @@
+<!-- Last Updated: 2026-10-11 (LIFF + กติกาใหม่) -->
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>แทนที่จะตีแบด</title>
+    <script>
+        window.onerror = function (msg, url, lineNo) {
+            var root = document.getElementById('root');
+            if (root) root.innerHTML = '<div style="padding:20px;color:#c00;font-size:15px"><b>🚨 ระบบเกิดข้อผิดพลาด:</b><br/>' + msg + '<br/><br/>Line: ' + lineNo + '</div>';
+            return false;
+        };
+    </script>
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <script>
+        tailwind.config = {
+            theme: { extend: { fontFamily: { sans: ['"Google Sans"', '"Noto Sans Thai"', 'sans-serif'] } } }
+        };
+    </script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.10/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap');
+
+        body { font-family: 'Google Sans', 'Noto Sans Thai', sans-serif; background: #F2F2F7; -webkit-tap-highlight-color: transparent; }
+        .animate-in { animation: animateIn 0.35s ease-out; }
+        @keyframes animateIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .sheet-in { animation: sheetIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes sheetIn { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+        .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+        .tabular-nums { font-variant-numeric: tabular-nums; }
+        @media (prefers-reduced-motion: reduce) { .animate-in, .sheet-in { animation: none; } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // ===================== ตั้งค่า =====================
+        const GAS_URL = "https://script.google.com/macros/s/XXXXXXXX/exec"; // URL ของ Apps Script (ลงท้าย /exec)
+        const LIFF_ID = "1234567890-AbCdEfGh";                              // LIFF ID จาก LINE Developers
+        const APP_NAME = "แทนที่จะตีแบด";
+        const POINT_URL = "https://lin.ee/pIMi2X1";
+        const LIFF_URL = `https://liff.line.me/${LIFF_ID}`;
+        let liffReady = false;
+
+        // ค่าเริ่มต้นของกติกา (ค่าจริงอ่านจากชีท Settings ชุดเดียวกับ Code.gs)
+        const DEFAULT_RULES = {
+            WORKDAY_HOUR_CAP: 8,
+            WEEKEND_CLOSE_DAYS: 2,
+            WEEKEND_MIN_PLAYERS: 6,
+            COST_SPLIT_BASE: 6,
+            SHUTTLES_PER_SESSION: 2,
+            SHUTTLECOCK_PRICE: 65
+        };
+
+        const DAY_GRADIENTS = [
+            "bg-gradient-to-br from-red-400 to-[#FF3B30] text-white shadow-red-500/30",
+            "bg-gradient-to-br from-yellow-300 to-[#FFCC00] text-white shadow-yellow-500/30",
+            "bg-gradient-to-br from-pink-400 to-[#FF2D55] text-white shadow-pink-500/30",
+            "bg-gradient-to-br from-green-400 to-[#34C759] text-white shadow-green-500/30",
+            "bg-gradient-to-br from-orange-400 to-[#FF9500] text-white shadow-orange-500/30",
+            "bg-gradient-to-br from-[#47A1FF] to-[#007AFF] text-white shadow-blue-500/30",
+            "bg-gradient-to-br from-purple-400 to-[#AF52DE] text-white shadow-purple-500/30"
+        ];
+        const DIM_TILE = "bg-gradient-to-br from-gray-200 to-gray-300 text-gray-600 shadow-gray-500/20";
+        const TH_DAYS_SHORT = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
+        const TH_DAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+        const TH_MONTHS_SHORT = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+        const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+        const TASKS = [
+            { key: 'Task1', label: 'จองคอร์ด' },
+            { key: 'Task2', label: 'เก็บเงินสมาชิก' },
+            { key: 'Task3', label: 'เก็บค่าลูกเพิ่ม' },
+            { key: 'Task4', label: 'แจกแต้ม' }
+        ];
+        const TONES = {
+            green: 'text-emerald-700 bg-emerald-50',
+            amber: 'text-amber-700 bg-amber-50',
+            red: 'text-rose-600 bg-rose-50',
+            gray: 'text-gray-500 bg-gray-100'
+        };
+        const H1 = '18:00-19:00';
+        const H2 = '19:00-20:00';
+
+        // ===================== helpers =====================
+        const readRules = (settings = {}) => {
+            const r = { ...DEFAULT_RULES };
+            Object.keys(r).forEach(k => {
+                const raw = settings[k];
+                if (raw !== undefined && raw !== "" && !isNaN(Number(raw))) r[k] = Number(raw);
+            });
+            return r;
+        };
+        const isTrue = v => v === true || v === "TRUE" || v === "true" || v === "Y";
+        const hoursOf = r => String(r.Hours_Joined || "All");
+        const inH1 = r => { const h = hoursOf(r); return h === "All" || h.startsWith("18:00") || h.startsWith("16:00"); };
+        const inH2 = r => { const h = hoursOf(r); return h === "All" || h.startsWith("19:00") || h.startsWith("17:00"); };
+
+        const parseSessionDate = (v) => {
+            const d = new Date(v);
+            if (isNaN(d.getTime())) return d;
+            if (d.getFullYear() > 2400) d.setFullYear(d.getFullYear() - 543);
+            d.setHours(0, 0, 0, 0);
+            return d;
+        };
+        const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+        const daysFromToday = (d) => { const t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((d - t) / 86400000); };
+        const fmtShort = d => `${TH_DAYS_SHORT[d.getDay()]} ${d.getDate()} ${TH_MONTHS_SHORT[d.getMonth()]}`;
+        const fmtLong = d => `${TH_DAYS[d.getDay()]} ${d.getDate()} ${TH_MONTHS[d.getMonth()]} ${d.getFullYear() + 543}`;
+        const timeRange = isWorkday => isWorkday ? '18:00-20:00' : '16:00-18:00';
+        const hoursLabel = (h, isWorkday) => {
+            if (!isWorkday) return '16:00-18:00';
+            return h === 'All' ? '2 ชั่วโมง (18:00-20:00)' : h;
+        };
+
+        // สรุปสถานะของรอบตีหนึ่งรอบตามกติกา
+        const summarize = (s, allRegs, rules) => {
+            const regs = allRegs.filter(r => String(r.Session_ID) === String(s.Session_ID));
+            const date = parseSessionDate(s.Date);
+            const days = daysFromToday(date);
+            const isWorkday = s.Type === 'Workday';
+            const isCancelled = s.Status === 'Cancelled';
+            const isOpen = s.Status === 'Open';
+            const isPast = days < 0;
+            const cap = rules.WORKDAY_HOUR_CAP;
+            const min = rules.WEEKEND_MIN_PLAYERS;
+            const h1 = regs.filter(inH1).length;
+            const h2 = regs.filter(inH2).length;
+            const weekendClosed = !isWorkday && days < rules.WEEKEND_CLOSE_DAYS;
+            const lastRegDay = addDays(date, -rules.WEEKEND_CLOSE_DAYS);
+
+            const court = parseFloat(s.Cost) || (isWorkday ? 200 : 120);
+            const shuttle = rules.SHUTTLECOCK_PRICE * rules.SHUTTLES_PER_SESSION;
+            const total = court + shuttle;
+            // หารตามจำนวนคนจริง แต่ไม่เกิน COST_SPLIT_BASE (มาเกินกว่านี้ก็จ่ายเท่าราคาหาร 6)
+            // ยังไม่มีคนลงชื่อ → แสดงราคาตอนครบ COST_SPLIT_BASE
+            const splitBy = regs.length > 0 ? Math.min(regs.length, rules.COST_SPLIT_BASE) : rules.COST_SPLIT_BASE;
+            const perHead = Math.ceil(total / splitBy);
+            const fullPerHead = Math.ceil(total / rules.COST_SPLIT_BASE);
+
+            let badge;
+            if (isCancelled) badge = { text: 'งด', tone: 'red' };
+            else if (isPast) badge = { text: 'จบแล้ว', tone: 'gray' };
+            else if (!isOpen) badge = { text: 'ปิดรับ', tone: 'gray' };
+            else if (isWorkday) {
+                if (h1 >= cap && h2 >= cap) badge = { text: 'เต็มแล้ว', tone: 'red' };
+                else if (h1 >= cap || h2 >= cap) badge = { text: 'เต็ม 1 ชม.', tone: 'amber' };
+                else badge = { text: 'ว่าง', tone: 'green' };
+            } else if (weekendClosed) {
+                badge = regs.length >= min ? { text: 'ได้ไปต่อ', tone: 'green' } : { text: 'รอยืนยัน', tone: 'gray' };
+            } else {
+                const need = min - regs.length;
+                badge = need > 0 ? { text: `ขาดอีก ${need} คน`, tone: 'amber' } : { text: 'ครบแล้ว', tone: 'green' };
+            }
+
+            const canRegister = isOpen && !isPast && (isWorkday ? (h1 < cap || h2 < cap) : !weekendClosed);
+
+            return {
+                regs, date, days, isWorkday, isCancelled, isOpen, isPast, cap, min, h1, h2,
+                weekendClosed, lastRegDay, canRegister, badge,
+                costs: { court, shuttle, total, perHead, splitBy, fullPerHead }
+            };
+        };
+
+        // ===================== Icons =====================
+        const Svg = ({ size, className, children }) => (
+            <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+        );
+        const IconChevronLeft = ({ size = 20, className = "" }) => <Svg size={size} className={className}><polyline points="15 18 9 12 15 6" /></Svg>;
+        const IconChevronRight = ({ size = 20, className = "" }) => <Svg size={size} className={className}><polyline points="9 18 15 12 9 6" /></Svg>;
+        const IconClock = ({ size = 14, className = "" }) => <Svg size={size} className={className}><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></Svg>;
+        const IconCheckCircle = ({ size = 20, className = "" }) => <Svg size={size} className={className}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></Svg>;
+        const IconCircle = ({ size = 20, className = "" }) => <Svg size={size} className={className}><circle cx="12" cy="12" r="10" /></Svg>;
+        const IconSun = ({ size = 20, className = "" }) => <Svg size={size} className={className}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></Svg>;
+        const IconBanknote = ({ size = 16, className = "" }) => <Svg size={size} className={className}><rect width="20" height="12" x="2" y="6" rx="2" /><circle cx="12" cy="12" r="2" /><path d="M6 12h.01M18 12h.01" /></Svg>;
+        const IconShield = ({ size = 16, className = "" }) => <Svg size={size} className={className}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></Svg>;
+        const IconSearch = ({ size = 18, className = "" }) => <Svg size={size} className={className}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></Svg>;
+        const IconTrash = ({ size = 16, className = "" }) => <Svg size={size} className={className}><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></Svg>;
+        const IconLoader = ({ size = 24, className = "" }) => <Svg size={size} className={`animate-spin ${className}`}><path d="M21 12a9 9 0 1 1-6.219-8.56" /></Svg>;
+
+        // ===================== Small components =====================
+        const GlobalLoader = () => (
+            <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/30 backdrop-blur-sm">
+                <div className="bg-white/90 px-8 py-6 rounded-[24px] shadow-xl flex flex-col items-center gap-3">
+                    <IconLoader className="text-[#007AFF]" size={28} />
+                    <p className="text-[14px] font-medium text-gray-600">กำลังบันทึก...</p>
+                </div>
+            </div>
+        );
+
+        const Toast = ({ message, type }) => {
+            if (!message) return null;
+            return (
+                <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[400] animate-in flex items-center gap-2.5 px-4 py-3 rounded-[18px] bg-white shadow-lg border border-gray-100 max-w-[90vw]" style={{ marginTop: 'env(safe-area-inset-top, 0px)' }}>
+                    {type === 'error' ? <IconShield className="text-rose-500 shrink-0" size={20} /> : <IconCheckCircle className="text-[#34C759] shrink-0" size={20} />}
+                    <span className="text-[15px] font-medium text-black">{message}</span>
+                </div>
+            );
+        };
+
+        const SectionTitle = ({ children, right }) => (
+            <h3 className="text-[13px] font-medium text-gray-500 px-4 mb-2 flex justify-between items-center">
+                <span>{children}</span>
+                {right && <span>{right}</span>}
+            </h3>
+        );
+
+        const Row = ({ label, value, last }) => (
+            <div className={`p-4 flex justify-between items-center gap-3 ${last ? '' : 'border-b border-gray-200'}`}>
+                <span className="text-[17px] text-black">{label}</span>
+                <span className="text-[17px] text-gray-500 text-right">{value}</span>
+            </div>
+        );
+
+        const DateTile = ({ date, dim, size = 'md' }) => {
+            const box = size === 'lg' ? 'w-14 h-14 rounded-[16px]' : 'w-12 h-12 rounded-[14px]';
+            return (
+                <div className={`${box} shrink-0 flex flex-col items-center justify-center shadow-md ${dim ? DIM_TILE : DAY_GRADIENTS[date.getDay()]}`}>
+                    <span className="text-[10px] leading-none opacity-90">{TH_DAYS_SHORT[date.getDay()]}</span>
+                    <span className={`${size === 'lg' ? 'text-[22px]' : 'text-[19px]'} font-bold leading-tight tabular-nums`}>{date.getDate()}</span>
+                </div>
+            );
+        };
+
+        // แถบจำนวนคน: mode "cap" = เต็มเมื่อถึงเพดาน, mode "min" = ผ่านเมื่อถึงขั้นต่ำ
+        const CapacityBar = ({ label, count, target, mode = 'cap' }) => {
+            const pct = Math.min(100, target > 0 ? (count / target) * 100 : 0);
+            const reached = count >= target;
+            const barColor = mode === 'cap' ? (reached ? 'bg-rose-500' : 'bg-[#34C759]') : (reached ? 'bg-[#34C759]' : 'bg-amber-400');
+            const textColor = mode === 'cap' && reached ? 'text-rose-600 font-semibold' : 'text-gray-500';
+            return (
+                <div className="flex items-center gap-2 text-[12px]">
+                    <span className="w-12 text-gray-500 shrink-0">{label}</span>
+                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className={`w-10 text-right tabular-nums ${textColor}`}>{count}/{target}</span>
+                </div>
+            );
+        };
+
+        const NameChip = ({ name, isMe, size = 'sm' }) => (
+            <span className={`${size === 'lg' ? 'px-3 py-1.5 text-[16px]' : 'px-2.5 py-1 text-[13px]'} rounded-full font-medium ${isMe ? 'bg-[#007AFF] text-white' : 'bg-gray-100 text-gray-700'}`}>{name}</span>
+        );
+
+        const SessionSkeleton = () => (
+            <div className="bg-white rounded-[20px] shadow-sm p-4 animate-pulse flex gap-3.5">
+                <div className="w-12 h-12 rounded-[14px] bg-gray-200" />
+                <div className="flex-1 space-y-2 pt-1">
+                    <div className="h-4 w-2/3 bg-gray-200 rounded" />
+                    <div className="h-3 w-1/3 bg-gray-200 rounded" />
+                    <div className="h-1.5 w-full bg-gray-100 rounded-full mt-4" />
+                </div>
+            </div>
+        );
+
+        // ===================== Session card (หน้าแรก) =====================
+        const SessionCard = ({ s, info, rules, myId, getUserName, showTasks, onOpen }) => {
+            const mine = info.regs.some(r => String(r.User_ID) === myId);
+            const dim = info.isPast || info.isCancelled;
+            const pendingTasks = showTasks && info.isPast && !info.isCancelled ? TASKS.filter(t => !isTrue(s[t.key])) : [];
+
+            let subtitle = timeRange(info.isWorkday);
+            if (!info.isWorkday && !dim && !info.weekendClosed) subtitle += ` • ลงได้ถึง ${fmtShort(info.lastRegDay)}`;
+
+            return (
+                <button id={`session-${s.Session_ID}`} onClick={onOpen}
+                    className={`w-full text-left bg-white rounded-[20px] shadow-sm active:scale-[0.99] transition-transform p-4 ${dim ? 'opacity-70' : ''}`}>
+                    <div className="flex items-start gap-3.5">
+                        <DateTile date={info.date} dim={dim} />
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                                <span className={`font-semibold text-[17px] truncate ${info.isCancelled ? 'line-through text-gray-400' : 'text-black'}`}>
+                                    {s.Location || 'ไม่ระบุสนาม'}
+                                </span>
+                                {mine && !info.isCancelled && (
+                                    <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-[#007AFF] bg-blue-50 px-2 py-0.5 rounded-full">
+                                        <IconCheckCircle size={11} /> ลงแล้ว
+                                    </span>
+                                )}
+                            </div>
+                            <div className="text-[13px] text-gray-500 mt-0.5 truncate">
+                                {TH_MONTHS_SHORT[info.date.getMonth()]} • {subtitle}
+                            </div>
+                        </div>
+                        <span className={`shrink-0 text-[12px] font-semibold px-2.5 py-1 rounded-full ${TONES[info.badge.tone]}`}>{info.badge.text}</span>
+                    </div>
+
+                    {!dim && (
+                        <div className="mt-3.5 pl-[62px] space-y-1.5">
+                            {info.isWorkday ? (
+                                <>
+                                    <CapacityBar label="18-19 น." count={info.h1} target={info.cap} />
+                                    <CapacityBar label="19-20 น." count={info.h2} target={info.cap} />
+                                </>
+                            ) : (
+                                <CapacityBar label="ขั้นต่ำ" count={info.regs.length} target={info.min} mode="min" />
+                            )}
+                            <div className="flex items-center justify-between pt-1.5">
+                                <span className="text-[13px] text-gray-500">{info.regs.length > 0 ? `${info.regs.length} คน` : 'ยังไม่มีคนลงชื่อ'}</span>
+                                <span className="text-[14px] font-semibold text-black tabular-nums">
+                                    {info.regs.length > 0 && info.costs.splitBy < rules.COST_SPLIT_BASE && <span className="text-[12px] font-normal text-gray-400 mr-1">ตอนนี้</span>}
+                                    คนละ {info.costs.perHead} ฿
+                                </span>
+                            </div>
+                            {info.regs.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5 pt-1">
+                                    {info.regs.map((r, i) => (
+                                        <NameChip key={i} name={getUserName(r.User_ID)} isMe={String(r.User_ID) === myId} />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {info.isPast && !info.isCancelled && (
+                        <div className="mt-2 pl-[62px] text-[13px]">
+                            <span className="text-gray-500">{info.regs.length} คน • คนละ {info.costs.perHead} ฿</span>
+                            {showTasks && (pendingTasks.length > 0
+                                ? <div className="text-orange-500 font-medium mt-0.5">ค้าง: {pendingTasks.map(t => t.label).join(', ')}</div>
+                                : <div className="text-emerald-600 font-medium mt-0.5">เคลียร์ครบแล้ว</div>)}
+                        </div>
+                    )}
+                </button>
+            );
+        };
+
+        // ===================== หน้า Public =====================
+        function PublicSessionView({ sessionInfos, rules }) {
+            const upcoming = sessionInfos
+                .filter(x => !x.info.isPast && !x.info.isCancelled)
+                .sort((a, b) => a.info.date - b.info.date);
+
+            return (
+                <div className="min-h-screen p-4 pb-16 pt-safe">
+                    <div className="max-w-md mx-auto space-y-6 pt-6">
+                        <div className="bg-white rounded-[20px] p-6 shadow-sm">
+                            <div className="text-center">
+                                <div className="text-5xl mb-3">🏸</div>
+                                <h1 className="text-[28px] font-bold text-black tracking-tight">{APP_NAME}</h1>
+                                <p className="text-[15px] text-gray-500 mt-1">รอบตีแบดที่เปิดรับ</p>
+                            </div>
+                            <div className="bg-[#F2F2F7] rounded-2xl p-5 mt-6">
+                                <h3 className="font-semibold text-black mb-3 text-[15px]">กติกาก๊วน</h3>
+                                <ol className="space-y-3 text-[14px] text-gray-600 list-decimal pl-5">
+                                    <li><b className="text-black">วันธรรมดา</b> ชั่วโมงละไม่เกิน {rules.WORKDAY_HOUR_CAP} คน ลงชื่อได้จนถึงวันเล่น</li>
+                                    <li><b className="text-black">วันหยุด</b> ไม่จำกัดจำนวน ปิดรับก่อนวันเล่น {rules.WEEKEND_CLOSE_DAYS} วัน ถ้าไม่ถึง {rules.WEEKEND_MIN_PLAYERS} คนจะงดรอบและแจ้งทาง LINE</li>
+                                    <li><b className="text-black">ค่าใช้จ่าย</b> ค่าคอร์ด + ลูกแบด หารตามจำนวนคน มากันเกิน {rules.COST_SPLIT_BASE} คนก็จ่ายเท่าราคาหาร {rules.COST_SPLIT_BASE}</li>
+                                    <li><b className="text-black">ติดธุระ</b> กดยกเลิกในระบบได้ตลอด เพื่อนจะได้เข้ามาแทน</li>
+                                </ol>
+                            </div>
+                        </div>
+
+                        <div className="space-y-3">
+                            {upcoming.length === 0 ? (
+                                <div className="bg-white rounded-[20px] p-6 text-center text-gray-500 shadow-sm">ยังไม่มีรอบตีเปิดรับตอนนี้</div>
+                            ) : upcoming.map(({ s, info }) => (
+                                <div key={s.Session_ID} className="bg-white rounded-[20px] p-4 shadow-sm">
+                                    <div className="flex items-start gap-3.5">
+                                        <DateTile date={info.date} />
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-semibold text-[17px] text-black truncate">{s.Location}</div>
+                                            <div className="text-[13px] text-gray-500">{fmtLong(info.date)} • {timeRange(info.isWorkday)}</div>
+                                        </div>
+                                        <span className={`shrink-0 text-[12px] font-semibold px-2.5 py-1 rounded-full ${TONES[info.badge.tone]}`}>{info.badge.text}</span>
+                                    </div>
+                                    <div className="mt-3.5 pl-[62px] space-y-1.5">
+                                        {info.isWorkday ? (
+                                            <>
+                                                <CapacityBar label="18-19 น." count={info.h1} target={info.cap} />
+                                                <CapacityBar label="19-20 น." count={info.h2} target={info.cap} />
+                                            </>
+                                        ) : (
+                                            <CapacityBar label="ขั้นต่ำ" count={info.regs.length} target={info.min} mode="min" />
+                                        )}
+                                        <div className="text-right text-[14px] font-semibold text-black pt-1">คนละ {info.costs.perHead} ฿</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <a href={LIFF_URL} className="block w-full bg-[#06C755] text-white text-center font-semibold text-[17px] py-3.5 rounded-[16px] shadow-sm active:opacity-80">
+                            ลงชื่อผ่าน LINE
+                        </a>
+                    </div>
+                </div>
+            );
+        }
+
+        // ===================== App =====================
+        function BadmintonApp() {
+            // ---- data ----
+            const [users, setUsers] = useState([]);
+            const [sessions, setSessions] = useState([]);
+            const [allRegistrations, setAllRegistrations] = useState([]);
+            const [appSettings, setAppSettings] = useState({});
+
+            // ---- auth ----
+            const [currentUser, setCurrentUser] = useState(null);
+            const [lineProfile, setLineProfile] = useState(null);
+            const [isAdminUser, setIsAdminUser] = useState(false);
+            const [authLoading, setAuthLoading] = useState(true);
+            const [publicViewMode, setPublicViewMode] = useState(false);
+
+            // ---- ui ----
+            const [loading, setLoading] = useState(true);
+            const [globalError, setGlobalError] = useState(null);
+            const [submitting, setSubmitting] = useState(false);
+            const [toast, setToast] = useState({ message: '', type: '' });
+            const [newUserName, setNewUserName] = useState("");
+            const [searchUserQuery, setSearchUserQuery] = useState("");
+            const [filterMyStatus, setFilterMyStatus] = useState("All");
+            const [filterDay, setFilterDay] = useState("All");
+
+            // ---- detail ----
+            const [selectedId, setSelectedId] = useState(null);
+            const [isScrolled, setIsScrolled] = useState(false);
+            const [isEditing, setIsEditing] = useState(false);
+            const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+            const [isTimeSelectorOpen, setIsTimeSelectorOpen] = useState(false);
+            const [selectedHour, setSelectedHour] = useState("All");
+            const [extraShuttles, setExtraShuttles] = useState(0);
+            const [pendingTasks, setPendingTasks] = useState({});
+            const [lineText, setLineText] = useState("");
+            const [copied, setCopied] = useState(false);
+
+            // ---- admin manager ----
+            const [showAdminManager, setShowAdminManager] = useState(false);
+            const [amData, setAmData] = useState([]);
+            const [amExistingId, setAmExistingId] = useState("");
+            const [amNewName, setAmNewName] = useState("");
+            const [amNewHours, setAmNewHours] = useState("All");
+            const [amWillCancel, setAmWillCancel] = useState(false);
+
+            const scrollPositionRef = useRef(0);
+
+            const showToast = (message, type = 'success') => {
+                setToast({ message, type });
+                setTimeout(() => setToast({ message: '', type: '' }), 3000);
+            };
+
+            // ---------- API ----------
+            const sendApiRequest = async (action, payload = null) => {
+                const idToken = liffReady && liff.isLoggedIn() ? liff.getIDToken() : null;
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 20000);
+                try {
+                    // ไม่ใส่ headers เพื่อให้เป็น text/plain และไม่ติด CORS preflight
+                    const res = await fetch(GAS_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({ action, payload, idToken }),
+                        signal: controller.signal
+                    });
+                    const result = await res.json();
+                    if (result.code === 'AUTH_EXPIRED') {
+                        liff.logout();
+                        window.location.reload();
+                        return new Promise(() => {});
+                    }
+                    return result;
+                } catch (e) {
+                    if (e.name === 'AbortError') throw new Error("การเชื่อมต่อใช้เวลานานเกินไป กรุณาลองใหม่");
+                    throw e;
+                } finally {
+                    clearTimeout(timer);
+                }
+            };
+
+            const fetchAllData = async () => {
+                try {
+                    const result = await sendApiRequest("getAllData");
+                    if (result.status === "success") {
+                        setSessions(result.data.sessions || []);
+                        setUsers(result.data.users || []);
+                        setAllRegistrations(result.data.registrations || []);
+                        setAppSettings(result.data.settings || {});
+                    } else {
+                        setGlobalError("โหลดข้อมูลไม่ได้: " + result.message);
+                    }
+                } catch (e) {
+                    setGlobalError("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: " + e.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            // เรียก action ที่เขียนข้อมูล แล้วโหลดข้อมูลใหม่
+            const runAction = async (action, payload, okMessage) => {
+                setSubmitting(true);
+                try {
+                    const r = await sendApiRequest(action, payload);
+                    if (r.status === 'success') {
+                        if (okMessage) showToast(okMessage);
+                        await fetchAllData();
+                        return true;
+                    }
+                    showToast(r.message || 'ทำรายการไม่สำเร็จ', 'error');
+                    await fetchAllData();
+                    return false;
+                } catch (e) {
+                    showToast('เชื่อมต่อไม่ได้: ' + e.message, 'error');
+                    return false;
+                } finally {
+                    setSubmitting(false);
+                }
+            };
+
+            const applyUser = (u) => {
+                setCurrentUser(u);
+                setIsAdminUser(!!u.isAdmin);
+            };
+
+            // ---------- LIFF login ----------
+            useEffect(() => {
+                const params = new URLSearchParams(window.location.search);
+                if (params.get('public') === 'true') {
+                    setPublicViewMode(true);
+                    setAuthLoading(false);
+                    fetchAllData();
+                    return;
+                }
+                (async () => {
+                    try {
+                        await liff.init({ liffId: LIFF_ID });
+                        if (!liff.isLoggedIn()) {
+                            liff.login({ redirectUri: window.location.href });
+                            return;
+                        }
+                        liffReady = true;
+                        const [me] = await Promise.all([sendApiRequest("me"), fetchAllData()]);
+                        if (me.status === "success") {
+                            setLineProfile(me.data.line);
+                            if (me.data.user) applyUser(me.data.user);
+                        } else {
+                            setGlobalError(me.message);
+                        }
+                    } catch (e) {
+                        setGlobalError("เข้าสู่ระบบ LINE ไม่สำเร็จ: " + e.message);
+                    } finally {
+                        setAuthLoading(false);
+                    }
+                })();
+            }, []);
+
+            // ---------- derived ----------
+            const rules = useMemo(() => readRules(appSettings), [appSettings]);
+            const myId = currentUser ? String(currentUser.User_ID) : '';
+
+            const nameById = useMemo(() => {
+                const m = {};
+                users.forEach(u => { m[String(u.User_ID)] = u.DisplayName; });
+                return m;
+            }, [users]);
+            const getUserName = (id) => nameById[String(id)] || 'ไม่ทราบชื่อ';
+
+            const sessionInfos = useMemo(() => sessions
+                .filter(s => s.Session_ID && String(s.Status || '').trim() !== '' && !isNaN(parseSessionDate(s.Date).getTime()))
+                .map(s => ({ s, info: summarize(s, allRegistrations, rules) })),
+                [sessions, allRegistrations, rules]);
+
+            const homeList = useMemo(() => {
+                const list = sessionInfos.filter(({ s, info }) => {
+                    if (info.isPast && (info.isCancelled || TASKS.every(t => isTrue(s[t.key])))) return false;
+                    const mine = info.regs.some(r => String(r.User_ID) === myId);
+                    if (filterMyStatus === 'Joined' && !mine) return false;
+                    if (filterMyStatus === 'NotJoined' && (mine || info.isPast || info.isCancelled)) return false;
+                    if (filterDay === 'Weekend' && s.Type !== 'Weekend') return false;
+                    return true;
+                });
+                return {
+                    upcoming: list.filter(x => !x.info.isPast).sort((a, b) => a.info.date - b.info.date),
+                    past: list.filter(x => x.info.isPast).sort((a, b) => b.info.date - a.info.date)
+                };
+            }, [sessionInfos, filterMyStatus, filterDay, myId]);
+
+            const selected = useMemo(
+                () => selectedId ? sessionInfos.find(x => String(x.s.Session_ID) === String(selectedId)) || null : null,
+                [sessionInfos, selectedId]);
+            const selectedSession = selected ? selected.s : null;
+            const info = selected ? selected.info : null;
+            const currentRegs = info ? info.regs : [];
+            const myReg = currentRegs.find(r => String(r.User_ID) === myId) || null;
+
+            // ที่ว่างของแต่ละชั่วโมง (ไม่นับตัวเอง เผื่อกรณีแก้ไขเวลา)
+            const others = currentRegs.filter(r => String(r.User_ID) !== myId);
+            const h1Others = others.filter(inH1).length;
+            const h2Others = others.filter(inH2).length;
+            const cap = rules.WORKDAY_HOUR_CAP;
+            const disableH1 = h1Others >= cap;
+            const disableH2 = h2Others >= cap;
+            const disableAll = disableH1 || disableH2;
+
+            // ---------- effects ----------
+            useEffect(() => {
+                if (!selectedId) return;
+                const onScroll = () => setIsScrolled(window.scrollY > 40);
+                window.addEventListener('scroll', onScroll);
+                return () => window.removeEventListener('scroll', onScroll);
+            }, [selectedId]);
+
+            useEffect(() => {
+                if (selectedId) window.scrollTo(0, 0);
+                else setTimeout(() => window.scrollTo(0, scrollPositionRef.current), 10);
+            }, [selectedId]);
+
+            useEffect(() => {
+                setPendingTasks({});
+                setIsEditing(false);
+            }, [selectedId]);
+
+            useEffect(() => {
+                setExtraShuttles(selectedSession ? (Number(selectedSession.Extra_Shuttles) || 0) : 0);
+            }, [selectedId, selectedSession && selectedSession.Extra_Shuttles]);
+
+            useEffect(() => {
+                if (!info) return;
+                if (myReg) setSelectedHour(hoursOf(myReg));
+                else if (!disableAll) setSelectedHour('All');
+                else if (!disableH1) setSelectedHour(H1);
+                else setSelectedHour(H2);
+            }, [selectedId, myReg && myReg.Hours_Joined, isEditing]);
+
+            // ข้อความสำหรับโพสต์ในกลุ่ม LINE
+            useEffect(() => {
+                if (!selected) return;
+                const { s, info: si } = selected;
+                const d = si.date;
+                const head = `วัน${TH_DAYS[d.getDay()]}/${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(-2)}${s.Location ? ' ' + s.Location : ''}`;
+                const c = si.costs;
+                const costStr = `ค่าคอร์ด ${c.court} บาท + ค่าลูก ${c.shuttle} บาท\nคนละ ${c.perHead} บาท (หาร ${c.splitBy} คน${c.splitBy < rules.COST_SPLIT_BASE ? ` ถ้าครบ ${rules.COST_SPLIT_BASE} คนเหลือคนละ ${c.fullPerHead} บาท` : ''})`;
+                const numbered = (list, minLines) => {
+                    let t = '';
+                    const n = Math.max(minLines, list.length);
+                    for (let i = 0; i < n; i++) t += `${i + 1}.${list[i] ? ' ' + getUserName(list[i].User_ID) : ''}\n`;
+                    return t;
+                };
+                let body;
+                if (si.isWorkday) {
+                    const l1 = si.regs.filter(inH1), l2 = si.regs.filter(inH2);
+                    body = `⌚18:00 - 19:00 (${l1.length}/${si.cap})\n${numbered(l1, si.cap)}\n⌚19:00 - 20:00 (${l2.length}/${si.cap})\n${numbered(l2, si.cap)}`;
+                } else {
+                    body = `⌚16:00 - 18:00 (ขั้นต่ำ ${si.min} คน ลงได้ถึง ${fmtShort(si.lastRegDay)})\n${numbered(si.regs, Math.max(si.min, si.regs.length + 1))}`;
+                }
+                setLineText(`${head}\n${costStr}\n\n${body}\n🏸🏸🏸🏸🏸\nลงชื่อตีแบด ${LIFF_URL}`);
+            }, [selected, nameById, rules]);
+
+            // ---------- handlers ----------
+            const openSession = (id) => {
+                scrollPositionRef.current = window.scrollY;
+                setSelectedId(id);
+            };
+            const closeSession = () => { setSelectedId(null); setIsEditing(false); };
+
+            const handleCreateProfile = async (name) => {
+                setSubmitting(true);
+                try {
+                    const r = await sendApiRequest("createProfile", { display_name: name });
+                    if (r.status === "success") { applyUser(r.data); await fetchAllData(); }
+                    else showToast(r.message, "error");
+                } catch (e) { showToast(e.message, "error"); }
+                finally { setSubmitting(false); }
+            };
+
+            const handleLinkProfile = async (u) => {
+                if (!window.confirm(`ยืนยันว่าคุณคือ "${u.DisplayName}" ใช่ไหม?\nเลือกแล้วเปลี่ยนเองไม่ได้`)) return;
+                setSubmitting(true);
+                try {
+                    const r = await sendApiRequest("linkProfile", { user_id: u.User_ID });
+                    if (r.status === "success") { applyUser(r.data); await fetchAllData(); }
+                    else showToast(r.message, "error");
+                } catch (e) { showToast(e.message, "error"); }
+                finally { setSubmitting(false); }
+            };
+
+            const handleLogout = () => {
+                if (!window.confirm('ออกจากระบบใช่ไหม?')) return;
+                if (liffReady) liff.logout();
+                window.location.reload();
+            };
+
+            const handleRegister = async () => {
+                const hour = info.isWorkday ? selectedHour : 'All';
+                if (info.isWorkday && ((hour === 'All' && disableAll) || (hour === H1 && disableH1) || (hour === H2 && disableH2))) {
+                    return showToast('ชั่วโมงที่เลือกเต็มแล้ว', 'error');
+                }
+                const ok = await runAction('register',
+                    { session_id: selectedSession.Session_ID, hours_joined: hour },
+                    myReg ? 'เปลี่ยนเวลาแล้ว' : 'ลงชื่อสำเร็จ!');
+                if (ok) setIsEditing(false);
+            };
+
+            const handleCancel = async () => {
+                const ok = await runAction('cancel', { session_id: selectedSession.Session_ID }, 'ยกเลิกเรียบร้อย');
+                if (ok) { setShowCancelConfirm(false); setIsEditing(false); }
+            };
+
+            const handleSaveExtraShuttles = () => runAction('updateTask', {
+                session_id: selectedSession.Session_ID, task_key: 'Extra_Shuttles', task_value: extraShuttles
+            }, 'บันทึกจำนวนลูกแล้ว');
+
+            const handleTaskToggleLocal = (key) => {
+                setPendingTasks(prev => {
+                    const next = { ...prev };
+                    const original = isTrue(selectedSession[key]);
+                    const current = prev[key] !== undefined ? prev[key] : original;
+                    next[key] = !current;
+                    if (next[key] === original) delete next[key];
+                    return next;
+                });
+            };
+
+            const handleTaskSave = async () => {
+                const ok = await runAction('updateTask', { session_id: selectedSession.Session_ID, tasks: pendingTasks }, 'อัปเดตเช็คลิสต์แล้ว');
+                if (ok) setPendingTasks({});
+            };
+
+            const handleCopyLineText = async () => {
+                try {
+                    await navigator.clipboard.writeText(lineText);
+                } catch (e) {
+                    const ta = document.getElementById('line-export-text');
+                    ta.select();
+                    document.execCommand('copy');
+                }
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+            };
+
+            const handleSharePublic = () => {
+                const url = `${window.location.origin}${window.location.pathname}?public=true`;
+                navigator.clipboard.writeText(url).then(() => showToast("คัดลอกลิงก์หน้า Public แล้ว"));
+            };
+
+            // ---------- admin manager ----------
+            const pickForCompare = list => JSON.stringify(list.map(r => [String(r.User_ID), hoursOf(r)]));
+
+            const openAdminManager = () => {
+                setAmData(currentRegs.map(r => ({ ...r })));
+                setAmExistingId("");
+                setAmNewName("");
+                setAmNewHours("All");
+                setAmWillCancel(info.isCancelled);
+                setShowAdminManager(true);
+            };
+
+            const buildPendingAdd = () => {
+                const base = { Hours_Joined: info.isWorkday ? amNewHours : 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() };
+                if (amExistingId) {
+                    const u = users.find(x => String(x.User_ID) === amExistingId);
+                    if (u) return { ...base, User_ID: String(u.User_ID), DisplayName: u.DisplayName };
+                }
+                const name = amNewName.trim();
+                if (name) return { ...base, User_ID: 'NEW_' + Date.now(), DisplayName: name };
+                return null;
+            };
+
+            const handleAdminAdd = () => {
+                const row = buildPendingAdd();
+                if (!row) return;
+                if (amData.some(r => String(r.User_ID) === row.User_ID)) return showToast('มีชื่อนี้ในรอบแล้ว', 'error');
+                setAmData([...amData, row]);
+                setAmExistingId("");
+                setAmNewName("");
+                setAmNewHours("All");
+            };
+
+            const handleAdminSave = async () => {
+                const data = [...amData];
+                const pending = buildPendingAdd();
+                if (pending && !data.some(r => String(r.User_ID) === pending.User_ID)) data.push(pending);
+
+                const statusChanged = amWillCancel !== info.isCancelled;
+                const playersChanged = pickForCompare(data) !== pickForCompare(currentRegs);
+                if (!statusChanged && !playersChanged) { setShowAdminManager(false); return; }
+
+                setSubmitting(true);
+                try {
+                    if (statusChanged) {
+                        const r = await sendApiRequest(amWillCancel ? 'cancelSession' : 'openSession', { session_id: selectedSession.Session_ID });
+                        if (r.status !== 'success') throw new Error(r.message);
+                    }
+                    if (playersChanged) {
+                        const r = await sendApiRequest('adminUpdateRegistrations', { session_id: selectedSession.Session_ID, registrations: data });
+                        if (r.status !== 'success') throw new Error(r.message);
+                    }
+                    showToast('บันทึกแล้ว');
+                    setShowAdminManager(false);
+                    await fetchAllData();
+                } catch (e) {
+                    showToast(e.message || 'บันทึกไม่สำเร็จ', 'error');
+                } finally {
+                    setSubmitting(false);
+                }
+            };
+
+            // =================== RENDER ===================
+            if (globalError) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-6 text-center">
+                        <div className="bg-white p-8 rounded-[24px] shadow-sm max-w-sm w-full">
+                            <div className="text-rose-500 mb-4 flex justify-center"><IconShield size={44} /></div>
+                            <h2 className="text-xl font-bold mb-2 text-black">โหลดข้อมูลไม่ได้</h2>
+                            <p className="text-gray-600 mb-6 text-[15px]">{globalError}</p>
+                            <button onClick={() => window.location.reload()} className="w-full bg-[#007AFF] text-white py-3 rounded-[14px] font-semibold active:opacity-80">
+                                ลองใหม่อีกครั้ง
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (authLoading || (publicViewMode && loading)) {
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center gap-4">
+                        <span className="text-5xl">🏸</span>
+                        <IconLoader className="text-gray-400" />
+                        <p className="text-[15px] text-gray-500">{publicViewMode ? 'กำลังโหลด...' : 'กำลังเข้าสู่ระบบด้วย LINE...'}</p>
+                    </div>
+                );
+            }
+
+            if (publicViewMode) return <PublicSessionView sessionInfos={sessionInfos} rules={rules} />;
+
+            // ---------- ตั้งค่าโปรไฟล์ครั้งแรก ----------
+            if (!currentUser) {
+                const unlinkedUsers = users
+                    .filter(u => !u.Linked)
+                    .filter(u => !searchUserQuery || String(u.DisplayName || "").toLowerCase().includes(searchUserQuery.toLowerCase()))
+                    .sort((a, b) => String(a.DisplayName || "").localeCompare(String(b.DisplayName || ""), 'th'));
+
+                return (
+                    <div className="min-h-screen p-4 pt-12">
+                        <Toast message={toast.message} type={toast.type} />
+                        {submitting && <GlobalLoader />}
+                        <div className="w-full max-w-md mx-auto space-y-8">
+                            <div className="flex flex-col items-center text-center">
+                                {lineProfile && lineProfile.picture
+                                    ? <img src={lineProfile.picture} alt="" className="w-20 h-20 rounded-full shadow-sm mb-3" />
+                                    : <span className="text-6xl mb-3">🏸</span>}
+                                <h2 className="text-[24px] font-semibold text-black">สวัสดี {lineProfile ? lineProfile.name : ''}</h2>
+                                <p className="text-gray-500 mt-1 text-[15px]">ตั้งค่าโปรไฟล์ครั้งแรก ทำครั้งเดียวจบ</p>
+                            </div>
+
+                            <div>
+                                <SectionTitle>มาครั้งแรก สร้างโปรไฟล์ใหม่</SectionTitle>
+                                <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
+                                    <input value={newUserName} onChange={e => setNewUserName(e.target.value)}
+                                        placeholder={(lineProfile && lineProfile.name) || "ชื่อที่ใช้ในก๊วน"}
+                                        className="w-full px-4 py-3.5 text-[17px] text-black outline-none border-b border-gray-200 placeholder-gray-400" />
+                                    <button onClick={() => handleCreateProfile(newUserName.trim() || (lineProfile && lineProfile.name))} disabled={submitting}
+                                        className="w-full py-3.5 text-[17px] text-[#007AFF] font-medium active:bg-gray-50 disabled:opacity-50">
+                                        สร้างโปรไฟล์
+                                    </button>
+                                </div>
+                            </div>
+
+                            {users.some(u => !u.Linked) && (
+                                <div>
+                                    <SectionTitle>เคยลงชื่อแล้ว เลือกชื่อเดิมของคุณ</SectionTitle>
+                                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
+                                        <div className="flex items-center px-4 py-3 border-b border-gray-200">
+                                            <IconSearch className="text-gray-400 mr-3" size={20} />
+                                            <input type="text" placeholder="ค้นหาชื่อ" value={searchUserQuery} onChange={e => setSearchUserQuery(e.target.value)}
+                                                className="w-full bg-transparent outline-none text-[17px] text-black placeholder-gray-400" />
+                                        </div>
+                                        <div className="max-h-[45vh] overflow-y-auto no-scrollbar">
+                                            {unlinkedUsers.map((u, i) => (
+                                                <button key={u.User_ID} onClick={() => handleLinkProfile(u)} disabled={submitting}
+                                                    className={`w-full text-left flex items-center justify-between px-4 py-3.5 active:bg-gray-100 ${i < unlinkedUsers.length - 1 ? 'border-b border-gray-200' : ''}`}>
+                                                    <span className="text-[17px] text-black">{u.DisplayName}</span>
+                                                    <IconChevronRight className="text-gray-300" size={20} />
+                                                </button>
+                                            ))}
+                                            {unlinkedUsers.length === 0 && <div className="p-6 text-center text-gray-500 text-[15px]">ไม่พบชื่อนี้</div>}
+                                        </div>
+                                    </div>
+                                    <p className="text-[13px] text-gray-500 px-4 mt-2">ประวัติการเล่นเดิมจะตามมาด้วย ถ้าเลือกผิดให้แจ้งแอดมิน</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            // ---------- หน้าแรก ----------
+            const renderHome = () => {
+                const emptyText = filterMyStatus === 'Joined' ? 'ยังไม่ได้ลงชื่อรอบไหน'
+                    : filterMyStatus === 'NotJoined' ? 'ลงชื่อครบทุกรอบแล้ว'
+                    : filterDay === 'Weekend' ? 'ยังไม่มีรอบวันหยุด'
+                    : 'ยังไม่มีรอบตีที่เปิดอยู่';
+                const tabs = [
+                    { key: 'all', label: 'เร็ว ๆ นี้', Icon: IconClock, active: filterMyStatus === 'All' && filterDay === 'All', onClick: () => { setFilterMyStatus('All'); setFilterDay('All'); window.scrollTo({ top: 0, behavior: 'smooth' }); } },
+                    { key: 'joined', label: 'ลงแล้ว', Icon: IconCheckCircle, active: filterMyStatus === 'Joined', onClick: () => { setFilterMyStatus(p => p === 'Joined' ? 'All' : 'Joined'); setFilterDay('All'); } },
+                    { key: 'notjoined', label: 'ยังไม่ลง', Icon: IconCircle, active: filterMyStatus === 'NotJoined', onClick: () => { setFilterMyStatus(p => p === 'NotJoined' ? 'All' : 'NotJoined'); setFilterDay('All'); } },
+                    { key: 'weekend', label: 'วันหยุด', Icon: IconSun, active: filterDay === 'Weekend', onClick: () => { setFilterDay(p => p === 'Weekend' ? 'All' : 'Weekend'); setFilterMyStatus('All'); } },
+                    { key: 'point', label: 'ทวงแต้ม', Icon: IconBanknote, active: false, onClick: () => window.open(POINT_URL, '_blank') }
+                ];
+
+                return (
+                    <>
+                        <main className="max-w-md mx-auto w-full px-4 pb-32 animate-in" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 2.5rem)' }}>
+                            <h1 className="text-[34px] font-bold text-black mb-5 px-1 tracking-tight">{APP_NAME}</h1>
+
+                            <button onClick={handleLogout} className="w-full bg-white rounded-[20px] mb-8 p-4 flex items-center gap-4 shadow-sm active:bg-gray-50 text-left">
+                                {lineProfile && lineProfile.picture
+                                    ? <img src={lineProfile.picture} alt="" className="w-[56px] h-[56px] rounded-full" />
+                                    : <div className="w-[56px] h-[56px] bg-gray-100 rounded-full flex items-center justify-center text-3xl">🏸</div>}
+                                <div className="flex-1 min-w-0">
+                                    <div className="font-medium text-[20px] text-black truncate">{currentUser.DisplayName}</div>
+                                    <div className="text-[13px] text-gray-500">{isAdminUser ? 'แอดมิน' : 'สมาชิก'} • แตะเพื่อออกจากระบบ</div>
+                                </div>
+                            </button>
+
+                            <SectionTitle right={isAdminUser && (
+                                <button onClick={handleSharePublic} className="text-[#007AFF] text-[15px] font-medium active:opacity-70">Share Link</button>
+                            )}>รอบที่กำลังจะมา</SectionTitle>
+
+                            <div className="flex flex-col gap-3 mb-8">
+                                {loading && sessionInfos.length === 0 ? (
+                                    <><SessionSkeleton /><SessionSkeleton /><SessionSkeleton /></>
+                                ) : homeList.upcoming.length === 0 ? (
+                                    <div className="bg-white rounded-[20px] p-10 text-center shadow-sm">
+                                        <div className="text-4xl mb-2">📭</div>
+                                        <div className="text-gray-500 text-[15px]">{emptyText}</div>
+                                    </div>
+                                ) : homeList.upcoming.map(({ s, info: si }) => (
+                                    <SessionCard key={s.Session_ID} s={s} info={si} rules={rules} myId={myId}
+                                        getUserName={getUserName} showTasks={isAdminUser} onOpen={() => openSession(s.Session_ID)} />
+                                ))}
+                            </div>
+
+                            {homeList.past.length > 0 && (
+                                <>
+                                    <SectionTitle>รอสรุปยอด</SectionTitle>
+                                    <div className="flex flex-col gap-3">
+                                        {homeList.past.map(({ s, info: si }) => (
+                                            <SessionCard key={s.Session_ID} s={s} info={si} rules={rules} myId={myId}
+                                                getUserName={getUserName} showTasks={isAdminUser} onOpen={() => openSession(s.Session_ID)} />
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                        </main>
+
+                        <div className="fixed bottom-0 left-0 w-full bg-white/85 backdrop-blur-xl border-t border-gray-200 z-50 pb-safe">
+                            <div className="max-w-md mx-auto flex px-2">
+                                {tabs.map(({ key, label, Icon, active, onClick }) => (
+                                    <button key={key} onClick={onClick}
+                                        className={`flex flex-col items-center gap-1 flex-1 py-2 transition-colors ${active ? 'text-[#007AFF]' : 'text-gray-400'}`}>
+                                        <Icon size={24} />
+                                        <span className="text-[10px] font-medium">{label}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </>
+                );
+            };
+
+            // ---------- หน้ารายละเอียดรอบ ----------
+            const renderDetail = () => {
+                const s = selectedSession;
+                const si = info;
+                const dim = si.isPast || si.isCancelled;
+                const extraCost = extraShuttles * rules.SHUTTLECOCK_PRICE;
+                const extraPerHead = currentRegs.length > 0 && extraShuttles > 0 ? Math.ceil(extraCost / currentRegs.length) : 0;
+                const collected = si.costs.perHead * currentRegs.length;
+                const diff = collected - si.costs.total;
+                const extraChanged = extraShuttles !== (Number(s.Extra_Shuttles) || 0);
+
+                const rulesText = si.isWorkday
+                    ? `ชั่วโมงละไม่เกิน ${si.cap} คน ลงชื่อ เปลี่ยนเวลา หรือยกเลิกได้จนถึงวันเล่น`
+                    : `ไม่จำกัดจำนวน แต่ต้องมีอย่างน้อย ${si.min} คน ลงชื่อได้ถึง${TH_DAYS[si.lastRegDay.getDay()]}ที่ ${si.lastRegDay.getDate()} ${TH_MONTHS_SHORT[si.lastRegDay.getMonth()]} ถ้าไม่ครบระบบจะงดรอบและแจ้งทาง LINE`;
+
+                const closedReason = si.isPast ? 'รอบนี้จบแล้ว'
+                    : !si.isOpen ? 'รอบนี้ปิดรับลงชื่อ'
+                    : (!si.isWorkday && si.weekendClosed) ? `ปิดรับลงชื่อแล้ว (ปิดก่อนวันเล่น ${rules.WEEKEND_CLOSE_DAYS} วัน)`
+                    : 'เต็มทั้ง 2 ชั่วโมงแล้ว';
+
+                const hourOptions = [
+                    { value: 'All', label: 'ทั้ง 2 ชั่วโมง (18:00-20:00)', disabled: disableAll, note: disableAll ? 'มีชั่วโมงที่เต็ม' : '' },
+                    { value: H1, label: '18:00 - 19:00', disabled: disableH1, note: `${h1Others}/${cap}` },
+                    { value: H2, label: '19:00 - 20:00', disabled: disableH2, note: `${h2Others}/${cap}` }
+                ];
+
+                const oneHourPlayers = si.isWorkday && currentRegs.some(r => hoursOf(r) !== 'All');
+                const PlayerBox = ({ title, list, target }) => (
+                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
+                        <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 flex justify-between items-center">
+                            <span className="text-[16px] font-semibold text-gray-700">{title}</span>
+                            <span className="text-[15px] text-gray-500 tabular-nums">{target ? `${list.length}/${target}` : `${list.length} คน`}</span>
+                        </div>
+                        <div className="p-4 flex flex-wrap gap-2">
+                            {list.length === 0 && <span className="text-gray-400 text-[14px]">ยังไม่มี</span>}
+                            {list.map((p, i) => <NameChip key={i} size="lg" name={getUserName(p.User_ID)} isMe={String(p.User_ID) === myId} />)}
+                        </div>
+                    </div>
+                );
+
+                return (
+                    <div className="w-full max-w-md mx-auto pb-24 animate-in">
+                        {/* Nav */}
+                        <div style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }} className={`sticky top-0 z-50 flex items-center justify-between px-4 pb-3 mb-2 transition-all duration-300 ${isScrolled ? 'bg-white/95 backdrop-blur-md border-b border-gray-200/50 shadow-sm' : ''}`}>
+                            <button onClick={closeSession} className="w-8 h-8 rounded-full bg-gray-200/80 flex items-center justify-center text-black active:opacity-70 relative z-10">
+                                <IconChevronLeft size={22} className="-ml-0.5" />
+                            </button>
+                            <div className={`absolute left-1/2 -translate-x-1/2 font-semibold text-[17px] text-black transition-opacity ${isScrolled ? 'opacity-100' : 'opacity-0'}`}>
+                                {fmtShort(si.date)}
+                            </div>
+                            {isAdminUser
+                                ? <button onClick={openAdminManager} className="px-4 h-8 rounded-full bg-gray-200/80 text-[15px] font-medium text-black active:opacity-70 relative z-10">Manage</button>
+                                : <div className="w-8 h-8" />}
+                        </div>
+
+                        <div className="px-4">
+                            {/* Info */}
+                            <div className={`bg-white rounded-[20px] shadow-sm p-5 mb-8 ${dim ? 'opacity-80' : ''}`}>
+                                <DateTile date={si.date} dim={dim} size="lg" />
+                                <h1 className="text-[28px] font-bold text-black mt-4 mb-2 tracking-tight leading-tight">
+                                    {fmtLong(si.date)}{si.isCancelled && ' (งด)'}
+                                </h1>
+                                <p className={`font-semibold text-[17px] mb-2 ${si.isCancelled ? 'text-gray-400 line-through' : 'text-black'}`}>
+                                    {timeRange(si.isWorkday)} • {s.Location}
+                                </p>
+                                <p className="text-[15px] text-gray-500 leading-relaxed">{rulesText}</p>
+                            </div>
+
+                            {/* Registration */}
+                            <SectionTitle>ลงชื่อ</SectionTitle>
+                            <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mb-8">
+                                {si.isCancelled ? (
+                                    <div className="p-5 text-center text-[15px] text-gray-500">รอบนี้งดเล่น</div>
+                                ) : myReg && !isEditing ? (
+                                    <>
+                                        <Row label="สถานะ" value={<span className={si.isPast ? 'text-gray-500' : 'text-[#34C759]'}>ลงชื่อแล้ว</span>} />
+                                        <Row label="เวลาเล่น" value={hoursLabel(hoursOf(myReg), si.isWorkday)} last={si.isPast} />
+                                        {si.isPast ? null : (
+                                            <>
+                                                {si.isWorkday && si.isOpen && (
+                                                    <button onClick={() => setIsEditing(true)} disabled={submitting}
+                                                        className="w-full p-4 text-center text-[#007AFF] text-[17px] active:bg-gray-50 border-b border-gray-200">
+                                                        เปลี่ยนเวลา
+                                                    </button>
+                                                )}
+                                                <button onClick={() => setShowCancelConfirm(true)} disabled={submitting}
+                                                    className="w-full p-4 text-center text-[#FF3B30] text-[17px] active:bg-gray-50">
+                                                    ไม่สะดวกเล่นแล้ว
+                                                </button>
+                                            </>
+                                        )}
+                                    </>
+                                ) : (!myReg && !si.canRegister) ? (
+                                    <div className="p-6 text-center">
+                                        <IconClock size={30} className="text-gray-300 mx-auto mb-2" />
+                                        <div className="text-[17px] font-medium text-black">{closedReason}</div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {si.isWorkday ? (
+                                            <button type="button" disabled={submitting} onClick={() => setIsTimeSelectorOpen(true)}
+                                                className="w-full p-4 flex justify-between items-center active:bg-gray-50 border-b border-gray-200">
+                                                <span className="text-[17px] text-black">เวลา</span>
+                                                <span className="flex items-center gap-1.5 text-[17px] text-gray-500">
+                                                    {hoursLabel(selectedHour, true)}
+                                                    <IconChevronRight className="text-gray-300" size={20} />
+                                                </span>
+                                            </button>
+                                        ) : (
+                                            <Row label="เวลา" value="16:00-18:00" />
+                                        )}
+                                        <Row label="ค่าใช้จ่าย" value={`คนละ ${si.costs.perHead} ฿`} />
+                                        {isEditing && (
+                                            <button type="button" disabled={submitting} onClick={() => setIsEditing(false)}
+                                                className="w-full p-4 text-center text-gray-500 text-[17px] active:bg-gray-50 border-b border-gray-200">
+                                                ไม่เปลี่ยน
+                                            </button>
+                                        )}
+                                        <button type="button" onClick={handleRegister} disabled={submitting}
+                                            className="w-full p-4 text-center font-semibold text-[#007AFF] text-[17px] active:bg-gray-50 disabled:opacity-50">
+                                            {submitting ? 'กำลังบันทึก...' : isEditing ? 'บันทึกเวลาใหม่' : 'ลงชื่อ'}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Players */}
+                            <SectionTitle right={`รวม ${currentRegs.length} คน`}>รายชื่อ</SectionTitle>
+                            <div className="flex flex-col gap-3 mb-8">
+                                {si.isWorkday ? (
+                                    oneHourPlayers ? (
+                                        <>
+                                            <PlayerBox title="18:00 - 19:00" list={currentRegs.filter(inH1)} target={si.cap} />
+                                            <PlayerBox title="19:00 - 20:00" list={currentRegs.filter(inH2)} target={si.cap} />
+                                        </>
+                                    ) : (
+                                        <PlayerBox title="เล่น 2 ชั่วโมง" list={currentRegs} target={si.cap} />
+                                    )
+                                ) : (
+                                    <PlayerBox title="16:00 - 18:00" list={currentRegs} target={null} />
+                                )}
+                            </div>
+
+                            {/* Cost */}
+                            {!si.isCancelled && (
+                                <>
+                                    <SectionTitle>ค่าใช้จ่าย</SectionTitle>
+                                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mb-8">
+                                        <Row label="ค่าคอร์ด" value={`${si.costs.court} ฿`} />
+                                        <Row label={`ลูกแบด ${rules.SHUTTLES_PER_SESSION} ลูก`} value={`${si.costs.shuttle} ฿`} />
+                                        <div className="p-4 flex justify-between items-center border-b border-gray-200">
+                                            <div>
+                                                <div className="text-[17px] font-semibold text-black">คนละ</div>
+                                                <div className="text-[13px] text-gray-500">
+                                                    {si.costs.splitBy < rules.COST_SPLIT_BASE
+                                                        ? `หาร ${si.costs.splitBy} คนตอนนี้ • ครบ ${rules.COST_SPLIT_BASE} คนเหลือ ${si.costs.fullPerHead} ฿`
+                                                        : `หาร ${rules.COST_SPLIT_BASE} คน มากกว่านี้จ่ายเท่าเดิม`}
+                                                </div>
+                                            </div>
+                                            <span className="text-[22px] font-bold text-[#34C759] tabular-nums">{si.costs.perHead} ฿</span>
+                                        </div>
+
+                                        <div className={`p-4 flex justify-between items-center ${extraShuttles > 0 ? 'border-b border-gray-200' : ''}`}>
+                                            <div>
+                                                <div className="text-[17px] text-black">ใช้ลูกเพิ่มหลังเล่น</div>
+                                                {extraShuttles > 0 && <div className="text-[13px] text-gray-500">+{extraCost} ฿ หารทุกคนที่มา</div>}
+                                            </div>
+                                            {isAdminUser ? (
+                                                <div className="flex items-center gap-3 bg-[#E9E9EA] rounded-[10px] p-1">
+                                                    <button onClick={() => setExtraShuttles(Math.max(0, extraShuttles - 1))} className="w-8 h-8 rounded-[8px] bg-white shadow-sm text-lg active:opacity-70">-</button>
+                                                    <span className="font-semibold text-[17px] w-5 text-center tabular-nums">{extraShuttles}</span>
+                                                    <button onClick={() => setExtraShuttles(Math.min(20, extraShuttles + 1))} className="w-8 h-8 rounded-[8px] bg-white shadow-sm text-lg active:opacity-70">+</button>
+                                                </div>
+                                            ) : (
+                                                <span className="text-[17px] text-gray-500">{extraShuttles} ลูก</span>
+                                            )}
+                                        </div>
+                                        {extraShuttles > 0 && (
+                                            <div className="p-4 flex justify-between items-center">
+                                                <span className="text-[17px] text-black">เก็บเพิ่มคนละ</span>
+                                                <span className="text-[17px] font-semibold text-[#FF9500] tabular-nums">{extraPerHead} ฿</span>
+                                            </div>
+                                        )}
+                                        {isAdminUser && currentRegs.length > 0 && (
+                                            <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 flex justify-between text-[14px]">
+                                                <span className="text-gray-500">เก็บได้ {currentRegs.length} × {si.costs.perHead}</span>
+                                                <span className={diff >= 0 ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}>
+                                                    {collected} ฿ ({diff >= 0 ? 'เกิน' : 'ขาด'} {Math.abs(diff)} ฿)
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {isAdminUser && extraChanged && (
+                                        <div className="-mt-6 mb-8 flex gap-2">
+                                            <button onClick={() => setExtraShuttles(Number(s.Extra_Shuttles) || 0)} className="flex-1 bg-white text-[#FF3B30] font-semibold py-3 rounded-[14px] shadow-sm active:opacity-70">ยกเลิก</button>
+                                            <button onClick={handleSaveExtraShuttles} disabled={submitting} className="flex-[2] bg-[#007AFF] text-white font-semibold py-3 rounded-[14px] active:opacity-80 disabled:opacity-50">บันทึกจำนวนลูก</button>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+
+                            {/* Admin checklist */}
+                            {isAdminUser && !si.isCancelled && (
+                                <div className="mb-8">
+                                    <SectionTitle>เช็คลิสต์แอดมิน</SectionTitle>
+                                    <div className="bg-white rounded-[20px] overflow-hidden shadow-sm">
+                                        {TASKS.map((task, i) => {
+                                            const checked = pendingTasks[task.key] !== undefined ? pendingTasks[task.key] : isTrue(s[task.key]);
+                                            return (
+                                                <div key={task.key} onClick={() => !submitting && handleTaskToggleLocal(task.key)}
+                                                    className={`p-4 flex justify-between items-center active:bg-gray-50 cursor-pointer ${i < TASKS.length - 1 ? 'border-b border-gray-200' : ''}`}>
+                                                    <span className={`text-[17px] ${checked ? 'text-gray-400 line-through' : 'text-black'}`}>{task.label}</span>
+                                                    <span role="switch" aria-checked={checked}
+                                                        className={`${checked ? 'bg-[#34C759]' : 'bg-[#E9E9EA]'} relative inline-flex h-[31px] w-[51px] shrink-0 rounded-full transition-colors duration-300`}>
+                                                        <span className={`${checked ? 'translate-x-[22px]' : 'translate-x-[2px]'} inline-block h-[27px] w-[27px] mt-[2px] rounded-full bg-white shadow transition duration-300`} />
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    {Object.keys(pendingTasks).length > 0 && (
+                                        <div className="mt-3 flex gap-2">
+                                            <button onClick={() => setPendingTasks({})} className="flex-1 bg-white text-[#FF3B30] font-semibold py-3 rounded-[14px] shadow-sm active:opacity-70">ยกเลิก</button>
+                                            <button onClick={handleTaskSave} disabled={submitting} className="flex-[2] bg-[#007AFF] text-white font-semibold py-3 rounded-[14px] active:opacity-80 disabled:opacity-50">บันทึกเช็คลิสต์</button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* LINE text */}
+                            {isAdminUser && (
+                                <div className="mb-8">
+                                    <SectionTitle right={
+                                        <button onClick={handleCopyLineText} className={`text-[15px] font-medium ${copied ? 'text-[#34C759]' : 'text-[#007AFF] active:opacity-70'}`}>
+                                            {copied ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                                        </button>
+                                    }>ข้อความโพสต์ LINE</SectionTitle>
+                                    <div className="bg-white rounded-[20px] overflow-hidden shadow-sm">
+                                        <textarea id="line-export-text" rows="16" value={lineText} onChange={e => setLineText(e.target.value)}
+                                            className="w-full p-4 text-[15px] text-black bg-transparent outline-none resize-y" />
+                                    </div>
+                                    <p className="text-[13px] text-gray-500 px-4 mt-2">แก้ข้อความก่อนคัดลอกได้</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Time picker */}
+                        {isTimeSelectorOpen && ReactDOM.createPortal(
+                            <div className="fixed inset-0 z-[200] flex flex-col justify-end">
+                                <div className="absolute inset-0 bg-black/40" onClick={() => setIsTimeSelectorOpen(false)} />
+                                <div className="relative w-full max-w-md mx-auto p-2 pb-safe sheet-in">
+                                    <div className="bg-white rounded-[14px] overflow-hidden mb-2">
+                                        <div className="p-3 text-center text-[13px] text-gray-500 font-medium border-b border-gray-200">เลือกเวลา (ชั่วโมงละไม่เกิน {cap} คน)</div>
+                                        {hourOptions.map((o, i) => (
+                                            <button key={o.value} type="button" disabled={o.disabled}
+                                                onClick={() => { setSelectedHour(o.value); setIsTimeSelectorOpen(false); }}
+                                                className={`w-full p-4 text-center text-[19px] active:bg-gray-100 ${i < hourOptions.length - 1 ? 'border-b border-gray-200' : ''} ${o.disabled ? 'text-gray-300' : 'text-[#007AFF]'}`}>
+                                                {o.label}
+                                                {o.note && <span className="text-[14px] ml-2 text-gray-400">{o.disabled && o.value !== 'All' ? 'เต็ม' : o.note}</span>}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <button type="button" onClick={() => setIsTimeSelectorOpen(false)} className="w-full p-4 bg-white rounded-[14px] text-center text-[19px] font-semibold text-[#007AFF] active:bg-gray-100">
+                                        ปิด
+                                    </button>
+                                </div>
+                            </div>,
+                            document.body
+                        )}
+
+                        {/* Admin manager */}
+                        {showAdminManager && (
+                            <div className="fixed inset-0 z-[100] flex flex-col bg-[#F2F2F7] sheet-in">
+                                <div className="flex items-center justify-between px-4 py-3 bg-white/85 backdrop-blur-md border-b border-gray-200 pt-safe">
+                                    <button onClick={() => setShowAdminManager(false)} className="text-[17px] text-[#007AFF]">ยกเลิก</button>
+                                    <h3 className="text-[17px] font-semibold text-black">จัดการรายชื่อ</h3>
+                                    <button onClick={handleAdminSave} disabled={submitting} className="text-[17px] text-[#007AFF] font-semibold disabled:opacity-50">บันทึก</button>
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto pb-10">
+                                    <div className="mt-6">
+                                        <SectionTitle>รายชื่อ ({amData.length})</SectionTitle>
+                                        <div className="bg-white border-y border-gray-200 divide-y divide-gray-200">
+                                            {amData.length === 0 ? (
+                                                <div className="p-4 text-center text-[17px] text-gray-500">ยังไม่มีผู้เล่น</div>
+                                            ) : amData.map((reg, idx) => (
+                                                <div key={idx} className="p-4 flex items-center gap-3">
+                                                    <span className="flex-1 text-[17px] font-medium text-black truncate">{nameById[String(reg.User_ID)] || reg.DisplayName}</span>
+                                                    {si.isWorkday && (
+                                                        <select value={hoursOf(reg)}
+                                                            onChange={e => setAmData(amData.map((r, i) => i === idx ? { ...r, Hours_Joined: e.target.value } : r))}
+                                                            className="bg-gray-100 rounded-[8px] px-2 py-1.5 text-[14px] font-medium outline-none">
+                                                            <option value="All">2 ชม.</option>
+                                                            <option value={H1}>{H1}</option>
+                                                            <option value={H2}>{H2}</option>
+                                                        </select>
+                                                    )}
+                                                    <button onClick={() => setAmData(amData.filter((_, i) => i !== idx))}
+                                                        className="w-8 h-8 rounded-full bg-[#FF3B30]/10 flex items-center justify-center text-[#FF3B30] active:bg-[#FF3B30]/20">
+                                                        <IconTrash size={16} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-8">
+                                        <SectionTitle>เพิ่มผู้เล่น</SectionTitle>
+                                        <div className="bg-white border-y border-gray-200 divide-y divide-gray-200">
+                                            <div className="p-3 pl-4 flex items-center">
+                                                <span className="text-[17px] text-black w-24">จากระบบ</span>
+                                                <select value={amExistingId} onChange={e => { setAmExistingId(e.target.value); setAmNewName(""); }}
+                                                    className="flex-1 text-[17px] text-[#007AFF] bg-transparent outline-none text-right">
+                                                    <option value="">เลือก</option>
+                                                    {[...users].sort((a, b) => String(a.DisplayName).localeCompare(String(b.DisplayName), 'th'))
+                                                        .map(u => <option key={u.User_ID} value={String(u.User_ID)}>{u.DisplayName}</option>)}
+                                                </select>
+                                            </div>
+                                            <div className="p-3 pl-4 flex items-center">
+                                                <span className="text-[17px] text-black w-24">ชื่อใหม่</span>
+                                                <input type="text" placeholder="พิมพ์ชื่อ" value={amNewName}
+                                                    onChange={e => { setAmNewName(e.target.value); setAmExistingId(""); }}
+                                                    className="flex-1 text-[17px] text-[#007AFF] bg-transparent outline-none text-right placeholder-gray-300" />
+                                            </div>
+                                            {si.isWorkday && (
+                                                <div className="p-3 pl-4 flex items-center">
+                                                    <span className="text-[17px] text-black w-24">ชั่วโมง</span>
+                                                    <select value={amNewHours} onChange={e => setAmNewHours(e.target.value)}
+                                                        className="flex-1 text-[17px] text-[#007AFF] bg-transparent outline-none text-right">
+                                                        <option value="All">2 ชั่วโมง</option>
+                                                        <option value={H1}>{H1}</option>
+                                                        <option value={H2}>{H2}</option>
+                                                    </select>
+                                                </div>
+                                            )}
+                                            <button onClick={handleAdminAdd} className="w-full p-3 text-[#007AFF] font-medium text-[17px] active:bg-gray-50">เพิ่มลงรายชื่อ</button>
+                                        </div>
+                                        <p className="text-[13px] text-gray-500 px-4 mt-2">แอดมินเพิ่มได้เกินโควตา ระบบไม่บล็อก</p>
+                                    </div>
+
+                                    <div className="mt-8">
+                                        <SectionTitle>ตั้งค่ารอบ</SectionTitle>
+                                        <div className="bg-white border-y border-gray-200">
+                                            <label className="p-3 px-4 flex items-center justify-between cursor-pointer">
+                                                <span className="text-[17px] text-[#FF3B30]">งดรอบนี้</span>
+                                                <input type="checkbox" checked={amWillCancel} onChange={e => setAmWillCancel(e.target.checked)} className="sr-only peer" />
+                                                <span className="w-[51px] h-[31px] bg-[#E9E9EA] rounded-full relative transition-colors peer-checked:bg-[#FF3B30] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-[27px] after:w-[27px] after:shadow after:transition-all peer-checked:after:translate-x-[20px]" />
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Cancel confirm */}
+                        {showCancelConfirm && (
+                            <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+                                <div className="bg-white px-6 py-6 rounded-[24px] shadow-xl flex flex-col items-center gap-3 w-[85%] max-w-sm text-center animate-in">
+                                    <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center text-red-500"><IconShield size={24} /></div>
+                                    <h3 className="text-xl font-bold text-black">ไม่สะดวกเล่นแล้วใช่ไหม?</h3>
+                                    <p className="text-[15px] text-gray-500">ระบบจะแจ้งแอดมินทาง LINE และเปิดที่ว่างให้คนอื่น</p>
+                                    <div className="flex w-full gap-3 mt-3">
+                                        <button onClick={() => setShowCancelConfirm(false)} disabled={submitting} className="flex-1 py-3.5 rounded-[14px] bg-gray-100 text-gray-600 font-semibold text-[17px] active:bg-gray-200">ปิด</button>
+                                        <button onClick={handleCancel} disabled={submitting} className="flex-1 py-3.5 rounded-[14px] bg-[#FF3B30] text-white font-semibold text-[17px] active:opacity-80 flex justify-center items-center">
+                                            {submitting ? <IconLoader size={18} className="text-white" /> : 'ยืนยันยกเลิก'}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            return (
+                <div className="min-h-screen relative">
+                    <Toast message={toast.message} type={toast.type} />
+                    {submitting && <GlobalLoader />}
+                    {selected ? renderDetail() : renderHome()}
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<BadmintonApp />);
+    </script>
+</body>
+</html>
