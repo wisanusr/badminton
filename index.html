@@ -262,6 +262,13 @@
             );
         };
 
+        const WorkdayBars = ({ info }) => info.regs.every(r => hoursOf(r) === 'All')
+            ? <CapacityBar label="18-20 น." count={info.regs.length} target={info.cap} />
+            : <>
+                <CapacityBar label="18-19 น." count={info.h1} target={info.cap} />
+                <CapacityBar label="19-20 น." count={info.h2} target={info.cap} />
+            </>;
+
         const SessionSkeleton = () => (
             <div className="bg-white rounded-[20px] shadow-sm p-4 animate-pulse flex gap-3.5">
                 <div className="w-12 h-12 rounded-[14px] bg-gray-200" />
@@ -308,10 +315,7 @@
                     {!dim && (
                         <div className="mt-3.5 pl-[62px] space-y-1.5">
                             {info.isWorkday ? (
-                                <>
-                                    <CapacityBar label="18-19 น." count={info.h1} target={info.cap} />
-                                    <CapacityBar label="19-20 น." count={info.h2} target={info.cap} />
-                                </>
+                                    <WorkdayBars info={info} />
                             ) : (
                                 <CapacityBar label="ขั้นต่ำ" count={info.regs.length} target={info.min} mode="min" />
                             )}
@@ -385,10 +389,7 @@
                                     </div>
                                     <div className="mt-3.5 pl-[62px] space-y-1.5">
                                         {info.isWorkday ? (
-                                            <>
-                                                <CapacityBar label="18-19 น." count={info.h1} target={info.cap} />
-                                                <CapacityBar label="19-20 น." count={info.h2} target={info.cap} />
-                                            </>
+                                            <WorkdayBars info={info} />
                                         ) : (
                                             <CapacityBar label="ขั้นต่ำ" count={info.regs.length} target={info.min} mode="min" />
                                         )}
@@ -573,7 +574,7 @@
             const getUserPicture = (id) => {
                 if (String(id) === myId && lineProfile && lineProfile.picture) return lineProfile.picture;
                 const u = users.find(x => String(x.User_ID) === String(id));
-                return (u && (u.Picture_URL || u.Picture)) || '';
+                return (u && u.Profile_Pic) || '';
             };
 
             const sessionInfos = useMemo(() => sessions
@@ -677,7 +678,7 @@
             const handleCreateProfile = async (name) => {
                 setSubmitting(true);
                 try {
-                    const r = await sendApiRequest("createProfile", { display_name: name, picture_url: (lineProfile && lineProfile.picture) || "" });
+                    const r = await sendApiRequest("createProfile", { display_name: name });
                     if (r.status === "success") { applyUser(r.data); await fetchAllData(); }
                     else showToast(r.message, "error");
                 } catch (e) { showToast(e.message, "error"); }
@@ -688,7 +689,7 @@
                 if (!window.confirm(`ยืนยันว่าคุณคือ "${u.DisplayName}" ใช่ไหม?\nเลือกแล้วเปลี่ยนเองไม่ได้`)) return;
                 setSubmitting(true);
                 try {
-                    const r = await sendApiRequest("linkProfile", { user_id: u.User_ID, picture_url: (lineProfile && lineProfile.picture) || "" });
+                    const r = await sendApiRequest("linkProfile", { user_id: u.User_ID });
                     if (r.status === "success") { applyUser(r.data); await fetchAllData(); }
                     else showToast(r.message, "error");
                 } catch (e) { showToast(e.message, "error"); }
@@ -1085,14 +1086,7 @@
                                         <Row label="ค่าคอร์ด" value={`${si.costs.court} ฿`} />
                                         <Row label={`ลูกแบด ${rules.SHUTTLES_PER_SESSION} ลูก`} value={`${si.costs.shuttle} ฿`} />
                                         <div className="p-4 flex justify-between items-center border-b border-gray-200">
-                                            <div>
-                                                <div className="text-[17px] font-semibold text-black">คนละ</div>
-                                                <div className="text-[13px] text-gray-500">
-                                                    {si.costs.splitBy < rules.COST_SPLIT_BASE
-                                                        ? `หาร ${si.costs.splitBy} คนตอนนี้ • ครบ ${rules.COST_SPLIT_BASE} คนเหลือ ${si.costs.fullPerHead} ฿`
-                                                        : `หาร ${rules.COST_SPLIT_BASE} คน มากกว่านี้จ่ายเท่าเดิม`}
-                                                </div>
-                                            </div>
+                                            <span className="text-[17px] font-semibold text-black">คนละ</span>
                                             <span className="text-[22px] font-bold text-[#34C759] tabular-nums">{si.costs.perHead} ฿</span>
                                         </div>
 
