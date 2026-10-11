@@ -51,6 +51,7 @@
         const APP_NAME = "แทนที่จะตีแบด";
         const POINT_URL = "https://lin.ee/pIMi2X1";
         const LIFF_URL = `https://liff.line.me/${LIFF_ID}`;
+        const SHORT_LIFF_URL = "https://lllllllI.llIlI.lI";                 // ลิงก์ย่อของ LIFF ใช้ในข้อความโพสต์ LINE
         let liffReady = false;
 
         // ค่าเริ่มต้นของกติกา (ค่าจริงอ่านจากชีท Settings ชุดเดียวกับ Code.gs)
@@ -93,6 +94,9 @@
         const H2 = '19:00-20:00';
 
         // ===================== helpers =====================
+        const DEFAULT_LINE_TEMPLATE = "{วัน}\n{สนาม}\n\n{รายชื่อ}\n\n🏸🏸🏸🏸🏸\nลงชื่อตีแบด {ลิงก์}";
+        const renderLineTemplate = (tpl, vars) =>
+            String(tpl || DEFAULT_LINE_TEMPLATE).replace(/\{([^{}\n]+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
         const readRules = (settings = {}) => {
             const r = { ...DEFAULT_RULES };
             Object.keys(r).forEach(k => {
@@ -407,6 +411,402 @@
             );
         }
 
+        // ===================== หน้าจัดการข้อมูลแอดมิน (ชีท Sessions / Users / Registrations / Settings) =====================
+        const toInputDate = v => {
+            const d = parseSessionDate(v);
+            if (isNaN(d.getTime())) return '';
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        };
+        const SETTING_META = {
+            WORKDAY_HOUR_CAP:     { label: 'วันธรรมดา: รับสูงสุดต่อชั่วโมง', unit: 'คน', type: 'number' },
+            WEEKEND_MIN_PLAYERS:  { label: 'วันหยุด: ขั้นต่ำถึงจะเล่น', unit: 'คน', type: 'number' },
+            WEEKEND_CLOSE_DAYS:   { label: 'วันหยุด: ปิดรับก่อนวันเล่น', unit: 'วัน', type: 'number' },
+            COST_SPLIT_BASE:      { label: 'ค่าใช้จ่ายหารสูงสุด', unit: 'คน', type: 'number' },
+            SHUTTLES_PER_SESSION: { label: 'ลูกแบดที่รวมในค่าคอร์ดต่อรอบ', unit: 'ลูก', type: 'number' },
+            SHUTTLECOCK_PRICE:    { label: 'ราคาลูกแบด', unit: 'บาท', type: 'number' },
+            NOTIFY_CANCEL:        { label: 'แจ้งแอดมินทาง LINE เมื่อมีคนยกเลิก', type: 'bool' }
+        };
+        const HIDDEN_SETTING_KEYS = ['ADMIN_LINE_IDS', 'LINE_CHANNEL_ID', 'LINE_POST_TEMPLATE'];
+        const SAMPLE_TPL_VARS = {
+            'วัน': 'วันพฤหัสบดี 15-10-26', 'หัวข้อ': 'วันพฤหัสบดี/15/10/26 รพ.ศรีธัญญา', 'วันที่': 'พฤหัสบดี 15 ตุลาคม 2569', 'สนาม': 'รพ.ศรีธัญญา', 'เวลา': '18:00-20:00',
+            'ค่าคอร์ด': 200, 'ค่าลูก': 130, 'คนละ': 55, 'หาร': 6,
+            'ค่าใช้จ่าย': 'ค่าคอร์ด 200 บาท + ค่าลูก 130 บาท\nคนละ 55 บาท (หาร 6 คน)',
+            'รายชื่อ': '⌚18:00 - 20:00\n1. ครีม\n2. บูม\n3. นิวส์\n4.\n5.\n6.\n7.\n8.', 'ลิงก์': SHORT_LIFF_URL
+        };
+        const LINE_TPL_VARS = [
+            ['วัน', 'วันพฤหัสบดี 15-10-26'], ['วันที่', 'วันเต็ม'], ['หัวข้อ', 'วัน/วันที่ สนาม'], ['สนาม', ''], ['เวลา', ''],
+            ['ค่าคอร์ด', ''], ['ค่าลูก', ''], ['คนละ', ''], ['หาร', ''],
+            ['ค่าใช้จ่าย', 'สรุปค่าใช้จ่ายทั้งก้อน'], ['รายชื่อ', 'ช่องรายชื่อที่นับเลข'], ['ลิงก์', 'ลิงก์ลงชื่อ']
+        ];
+        const STATUS_LABEL = { Open: 'เปิดรับ', Closed: 'ปิดรับ', Cancelled: 'งด' };
+        const FIELD = "w-full bg-gray-100 rounded-[10px] px-3 py-2.5 text-[16px] text-black outline-none";
+
+        const AdminField = ({ label, children }) => (
+            <label className="block px-4 py-3 border-b border-gray-100 last:border-0">
+                <span className="block text-[13px] text-gray-500 mb-1">{label}</span>
+                {children}
+            </label>
+        );
+
+        const AdminSheet = ({ title, onClose, onSave, onDelete, busy, extra, children }) => (
+            <div className="fixed inset-0 z-[150] flex flex-col bg-[#F2F2F7] sheet-in">
+                <div className="flex items-center justify-between px-4 py-3 bg-white/85 backdrop-blur-md border-b border-gray-200 pt-safe">
+                    <button onClick={onClose} className="text-[17px] text-[#007AFF]">ยกเลิก</button>
+                    <h3 className="text-[17px] font-semibold text-black">{title}</h3>
+                    <button onClick={onSave} disabled={busy} className="text-[17px] text-[#007AFF] font-semibold disabled:opacity-50">บันทึก</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 pb-10 max-w-md w-full mx-auto">
+                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mb-4">{children}</div>
+                    {extra}
+                    {onDelete && (
+                        <button onClick={onDelete} disabled={busy} className="w-full bg-white rounded-[14px] shadow-sm py-3.5 text-[17px] text-[#FF3B30] active:bg-gray-50 disabled:opacity-50">ลบ</button>
+                    )}
+                </div>
+            </div>
+        );
+
+        function AdminPanel({ sessions, users, registrations, sendApiRequest, onChanged, onClose, showToast }) {
+            const [tab, setTab] = useState('sessions');
+            const [editor, setEditor] = useState(null);      // { kind: 'session' | 'user', data }
+            const [busy, setBusy] = useState(false);
+            const [query, setQuery] = useState('');
+
+            const call = async (action, payload, okMsg) => {
+                setBusy(true);
+                try {
+                    const r = await sendApiRequest(action, payload);
+                    if (r.status === 'success') {
+                        showToast(okMsg || r.message || 'บันทึกแล้ว');
+                        await onChanged();
+                        return true;
+                    }
+                    showToast(r.message || 'ทำรายการไม่สำเร็จ', 'error');
+                    return false;
+                } catch (e) {
+                    showToast('เชื่อมต่อไม่ได้: ' + e.message, 'error');
+                    return false;
+                } finally {
+                    setBusy(false);
+                }
+            };
+
+            const nameOf = id => (users.find(u => String(u.User_ID) === String(id)) || {}).DisplayName || 'ไม่ทราบชื่อ';
+            const setData = patch => setEditor({ ...editor, data: { ...editor.data, ...patch } });
+
+            // ---------- Sessions ----------
+            const sessionList = sessions.filter(s => s.Session_ID)
+                .sort((a, b) => parseSessionDate(b.Date) - parseSessionDate(a.Date));
+
+            const newSession = () => setEditor({ kind: 'session', data: { Session_ID: '', date: toInputDate(new Date()), type: 'Workday', location: '', status: 'Open', cost: 200 } });
+            const editSession = s => setEditor({ kind: 'session', data: {
+                Session_ID: s.Session_ID, date: toInputDate(s.Date), type: s.Type || 'Workday',
+                location: s.Location || '', status: s.Status || 'Open', cost: s.Cost === '' ? 0 : s.Cost } });
+            const saveSession = async () => {
+                const d = editor.data;
+                const ok = await call('adminSaveSession', { session_id: d.Session_ID, date: d.date, type: d.type, location: d.location, status: d.status, cost: d.cost });
+                if (ok) setEditor(null);
+            };
+            const deleteSession = async () => {
+                const n = registrations.filter(r => String(r.Session_ID) === String(editor.data.Session_ID)).length;
+                if (!window.confirm(`ลบรอบ ${editor.data.Session_ID} และรายชื่อ ${n} คนในรอบนี้ถาวร?`)) return;
+                const ok = await call('adminDeleteSession', { session_id: editor.data.Session_ID });
+                if (ok) setEditor(null);
+            };
+
+            // ---------- Users ----------
+            const userList = users.filter(u => u.User_ID)
+                .filter(u => !query || String(u.DisplayName || '').toLowerCase().includes(query.toLowerCase()))
+                .sort((a, b) => String(a.DisplayName || '').localeCompare(String(b.DisplayName || ''), 'th'));
+            const newUser = () => setEditor({ kind: 'user', data: { User_ID: '', name: '', skill: 'C', linked: false } });
+            const editUser = u => setEditor({ kind: 'user', data: { User_ID: u.User_ID, name: u.DisplayName || '', skill: u.Skill_Level || '', linked: !!u.Linked } });
+            const saveUser = async () => {
+                const d = editor.data;
+                const ok = await call('adminSaveUser', { user_id: d.User_ID, display_name: d.name, skill_level: d.skill });
+                if (ok) setEditor(null);
+            };
+            const unlinkUser = async () => {
+                if (!window.confirm('ปลดการผูก LINE ของสมาชิกคนนี้? เขาจะต้องผูกบัญชีใหม่อีกครั้ง')) return;
+                const ok = await call('adminUnlinkUser', { user_id: editor.data.User_ID });
+                if (ok) setEditor(null);
+            };
+            const deleteUser = async () => {
+                const n = registrations.filter(r => String(r.User_ID) === String(editor.data.User_ID)).length;
+                if (!window.confirm(`ลบ "${editor.data.name}" และรายชื่อที่ลงไว้ ${n} รอบถาวร?`)) return;
+                const ok = await call('adminDeleteUser', { user_id: editor.data.User_ID });
+                if (ok) setEditor(null);
+            };
+
+            // ---------- Registrations ----------
+            const [regSession, setRegSession] = useState('');
+            const [regRows, setRegRows] = useState([]);
+            const [regAdd, setRegAdd] = useState('');
+            const regSessionObj = sessions.find(s => String(s.Session_ID) === String(regSession));
+            const isWorkdayReg = !!regSessionObj && regSessionObj.Type === 'Workday';
+            useEffect(() => {
+                if (tab !== 'regs' || regSession || !sessionList.length) return;
+                const today = new Date(); today.setHours(0, 0, 0, 0);
+                const next = [...sessionList].reverse().find(s => parseSessionDate(s.Date) >= today) || sessionList[0];
+                setRegSession(String(next.Session_ID));
+            }, [tab, sessions]);
+            useEffect(() => {
+                setRegRows(registrations.filter(r => String(r.Session_ID) === String(regSession)).map(r => ({ ...r })));
+                setRegAdd('');
+            }, [regSession, registrations]);
+            const addReg = () => {
+                if (!regAdd) return;
+                if (regRows.some(r => String(r.User_ID) === regAdd)) return showToast('มีชื่อนี้ในรอบแล้ว', 'error');
+                setRegRows([...regRows, { User_ID: regAdd, Hours_Joined: 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() }]);
+                setRegAdd('');
+            };
+            const saveRegs = () => call('adminUpdateRegistrations', { session_id: regSession, registrations: regRows }, 'บันทึกรายชื่อแล้ว');
+            const patchReg = (i, patch) => setRegRows(regRows.map((x, j) => j === i ? { ...x, ...patch } : x));
+
+            // ---------- Settings ----------
+            const [settingRows, setSettingRows] = useState(null);
+            const [settingEdits, setSettingEdits] = useState({});
+            useEffect(() => {
+                if ((tab !== 'settings' && tab !== 'msg') || settingRows) return;
+                (async () => {
+                    try {
+                        const r = await sendApiRequest('adminGetSettings');
+                        if (r.status === 'success') setSettingRows(r.data); else showToast(r.message, 'error');
+                    } catch (e) { showToast(e.message, 'error'); }
+                })();
+            }, [tab]);
+            const saveSetting = async (key) => {
+                const value = settingEdits[key];
+                const ok = await call('adminSaveSetting', { key, value });
+                if (ok) {
+                    setSettingRows(rows => rows.map(r => r.Key === key ? { ...r, Value: value } : r));
+                    setSettingEdits(prev => { const next = { ...prev }; delete next[key]; return next; });
+                }
+            };
+
+            // ---------- ข้อความโพสต์ LINE ----------
+            const [tplEdit, setTplEdit] = useState(null);
+            const tplRef = useRef(null);
+            const savedTpl = settingRows ? ((settingRows.find(r => r.Key === 'LINE_POST_TEMPLATE') || {}).Value || DEFAULT_LINE_TEMPLATE) : DEFAULT_LINE_TEMPLATE;
+            const tplValue = tplEdit !== null ? tplEdit : savedTpl;
+            const insertVar = name => {
+                const el = tplRef.current;
+                const text = `{${name}}`;
+                const a = el ? el.selectionStart : tplValue.length, b = el ? el.selectionEnd : tplValue.length;
+                setTplEdit(tplValue.slice(0, a) + text + tplValue.slice(b));
+                setTimeout(() => { if (el) { el.focus(); el.setSelectionRange(a + text.length, a + text.length); } }, 0);
+            };
+            const saveTpl = async () => {
+                const ok = await call('adminSaveSetting', { key: 'LINE_POST_TEMPLATE', value: tplValue });
+                if (ok) {
+                    setSettingRows(rows => rows.some(r => r.Key === 'LINE_POST_TEMPLATE')
+                        ? rows.map(r => r.Key === 'LINE_POST_TEMPLATE' ? { ...r, Value: tplValue } : r)
+                        : [...rows, { Key: 'LINE_POST_TEMPLATE', Value: tplValue, Description: '' }]);
+                    setTplEdit(null);
+                }
+            };
+
+            const tabs = [['sessions', 'รอบตี'], ['users', 'สมาชิก'], ['regs', 'รายชื่อ'], ['msg', 'ข้อความ'], ['settings', 'ตั้งค่า']];
+
+            return (
+                <div className="w-full max-w-md mx-auto pb-24 animate-in">
+                    <div style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }} className="sticky top-0 z-50 bg-[#F2F2F7]/95 backdrop-blur-md px-4 pb-3">
+                        <div className="flex items-center justify-between mb-3">
+                            <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-200/80 flex items-center justify-center text-black active:opacity-70"><IconChevronLeft size={22} className="-ml-0.5" /></button>
+                            <h1 className="text-[17px] font-semibold text-black">จัดการข้อมูล</h1>
+                            <div className="w-8" />
+                        </div>
+                        <div className="flex bg-[#E9E9EA] rounded-[10px] p-0.5">
+                            {tabs.map(([k, label]) => (
+                                <button key={k} onClick={() => { setTab(k); setQuery(''); }}
+                                    className={`flex-1 py-1.5 text-[14px] rounded-[8px] ${tab === k ? 'bg-white shadow-sm font-semibold text-black' : 'text-gray-500'}`}>{label}</button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="px-4 pt-2">
+                        {tab === 'sessions' && (
+                            <>
+                                <button onClick={newSession} className="w-full bg-white rounded-[14px] shadow-sm py-3 mb-3 text-[17px] text-[#007AFF] font-medium active:bg-gray-50">+ เพิ่มรอบตี</button>
+                                <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
+                                    {sessionList.map(s => (
+                                        <button key={s.Session_ID} onClick={() => editSession(s)} className="w-full text-left px-4 py-3 border-b border-gray-100 last:border-0 active:bg-gray-50 flex items-center gap-3">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="text-[16px] text-black">{fmtShort(parseSessionDate(s.Date))} • {s.Location}</div>
+                                                <div className="text-[13px] text-gray-500">{s.Session_ID} • {s.Type === 'Workday' ? 'วันธรรมดา' : 'วันหยุด'} • {s.Cost} ฿</div>
+                                            </div>
+                                            <span className="text-[12px] text-gray-500 bg-gray-100 rounded-full px-2 py-0.5">{STATUS_LABEL[s.Status] || s.Status}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+
+                        {tab === 'users' && (
+                            <>
+                                <div className="flex gap-2 mb-3">
+                                    <input value={query} onChange={e => setQuery(e.target.value)} placeholder="ค้นหาชื่อ" className="flex-1 bg-white rounded-[14px] shadow-sm px-4 py-3 text-[16px] outline-none" />
+                                    <button onClick={newUser} className="bg-white rounded-[14px] shadow-sm px-4 text-[#007AFF] font-medium active:bg-gray-50">+ เพิ่ม</button>
+                                </div>
+                                <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
+                                    {userList.map(u => (
+                                        <button key={u.User_ID} onClick={() => editUser(u)} className="w-full text-left px-4 py-3 border-b border-gray-100 last:border-0 active:bg-gray-50 flex items-center gap-3">
+                                            <span className="flex-1 min-w-0 truncate text-[16px] text-black">{u.DisplayName}</span>
+                                            {u.Skill_Level && <span className="text-[12px] text-gray-500">{u.Skill_Level}</span>}
+                                            <span className={`text-[12px] rounded-full px-2 py-0.5 ${u.Linked ? 'text-emerald-700 bg-emerald-50' : 'text-gray-500 bg-gray-100'}`}>{u.Linked ? 'ผูก LINE' : 'ไม่ผูก'}</span>
+                                        </button>
+                                    ))}
+                                    {userList.length === 0 && <div className="p-6 text-center text-gray-400 text-[15px]">ไม่พบสมาชิก</div>}
+                                </div>
+                            </>
+                        )}
+
+                        {tab === 'regs' && (
+                            <>
+                                <div className="bg-white rounded-[14px] shadow-sm mb-3">
+                                    <select value={regSession} onChange={e => setRegSession(e.target.value)} className="w-full bg-transparent px-4 py-3 text-[16px] outline-none">
+                                        {sessionList.map(s => <option key={s.Session_ID} value={String(s.Session_ID)}>{fmtShort(parseSessionDate(s.Date))} • {s.Location}</option>)}
+                                    </select>
+                                </div>
+                                <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mb-3">
+                                    {regRows.length === 0 && <div className="p-6 text-center text-gray-400 text-[15px]">ยังไม่มีรายชื่อ</div>}
+                                    {regRows.map((r, i) => (
+                                        <div key={String(r.User_ID)} className="px-4 py-3 border-b border-gray-100 last:border-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="flex-1 truncate text-[16px] text-black">{nameOf(r.User_ID)}</span>
+                                                <button onClick={() => setRegRows(regRows.filter((_, j) => j !== i))}
+                                                    className="w-8 h-8 rounded-full bg-[#FF3B30]/10 flex items-center justify-center text-[#FF3B30]"><IconTrash size={16} /></button>
+                                            </div>
+                                            <div className="flex gap-2 mt-2">
+                                                {isWorkdayReg && (
+                                                    <select value={hoursOf(r)} onChange={e => patchReg(i, { Hours_Joined: e.target.value })}
+                                                        className="flex-1 bg-gray-100 rounded-[8px] px-2 py-1.5 text-[14px] outline-none">
+                                                        <option value="All">2 ชม.</option><option value={H1}>{H1}</option><option value={H2}>{H2}</option>
+                                                    </select>
+                                                )}
+                                                <select value={r.Payment_Status || 'Unpaid'} onChange={e => patchReg(i, { Payment_Status: e.target.value })}
+                                                    className={`flex-1 rounded-[8px] px-2 py-1.5 text-[14px] outline-none ${r.Payment_Status === 'Paid' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100'}`}>
+                                                    <option value="Unpaid">ยังไม่จ่าย</option><option value="Paid">จ่ายแล้ว</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex gap-2 mb-3">
+                                    <select value={regAdd} onChange={e => setRegAdd(e.target.value)} className="flex-1 bg-white rounded-[14px] shadow-sm px-3 py-3 text-[16px] outline-none">
+                                        <option value="">เพิ่มผู้เล่น...</option>
+                                        {[...users].sort((a, b) => String(a.DisplayName).localeCompare(String(b.DisplayName), 'th'))
+                                            .map(u => <option key={u.User_ID} value={String(u.User_ID)}>{u.DisplayName}</option>)}
+                                    </select>
+                                    <button onClick={addReg} className="bg-white rounded-[14px] shadow-sm px-4 text-[#007AFF] font-medium active:bg-gray-50">เพิ่ม</button>
+                                </div>
+                                <button onClick={saveRegs} disabled={busy || !regSession} className="w-full bg-[#007AFF] text-white font-semibold py-3.5 rounded-[14px] active:opacity-80 disabled:opacity-50">บันทึกรายชื่อ</button>
+                            </>
+                        )}
+
+                        {tab === 'msg' && (
+                            !settingRows ? <div className="p-10 text-center text-gray-400">กำลังโหลด...</div> : (
+                                <>
+                                    <div className="text-[13px] text-gray-500 px-1 mb-2">รูปแบบข้อความที่แอดมินคัดลอกไปโพสต์ในกลุ่ม LINE แตะชื่อด้านล่างเพื่อแทรกลงในข้อความ</div>
+                                    <div className="flex flex-wrap gap-1.5 mb-3">
+                                        {LINE_TPL_VARS.map(([k]) => (
+                                            <button key={k} onClick={() => insertVar(k)} className="px-2.5 py-1 rounded-full bg-white shadow-sm text-[13px] text-[#007AFF] active:bg-gray-50">{`{${k}}`}</button>
+                                        ))}
+                                    </div>
+                                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mb-4">
+                                        <textarea ref={tplRef} rows="9" value={tplValue} onChange={e => setTplEdit(e.target.value)}
+                                            className="w-full p-4 text-[15px] text-black bg-transparent outline-none resize-y" />
+                                    </div>
+                                    <SectionTitle>ตัวอย่างข้อความ</SectionTitle>
+                                    <div className="bg-white rounded-[20px] shadow-sm p-4 mb-4 whitespace-pre-wrap text-[14px] text-gray-700 break-words">{renderLineTemplate(tplValue, SAMPLE_TPL_VARS)}</div>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setTplEdit(DEFAULT_LINE_TEMPLATE)} disabled={busy || tplValue === DEFAULT_LINE_TEMPLATE}
+                                            className="flex-1 bg-white text-[#FF3B30] font-semibold py-3 rounded-[14px] shadow-sm active:opacity-70 disabled:opacity-40">คืนค่าเริ่มต้น</button>
+                                        <button onClick={saveTpl} disabled={busy || tplEdit === null || tplEdit === savedTpl}
+                                            className="flex-[2] bg-[#007AFF] text-white font-semibold py-3 rounded-[14px] active:opacity-80 disabled:opacity-50">บันทึก</button>
+                                    </div>
+                                </>
+                            )
+                        )}
+
+                        {tab === 'settings' && (
+                            !settingRows ? <div className="p-10 text-center text-gray-400">กำลังโหลด...</div> : (
+                                <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
+                                    {settingRows.filter(r => !HIDDEN_SETTING_KEYS.includes(r.Key)).map(r => {
+                                        const meta = SETTING_META[r.Key] || {};
+                                        const val = settingEdits[r.Key] !== undefined ? settingEdits[r.Key] : String(r.Value);
+                                        const changed = settingEdits[r.Key] !== undefined && settingEdits[r.Key] !== String(r.Value);
+                                        const edit = v => setSettingEdits({ ...settingEdits, [r.Key]: v });
+                                        const isBool = meta.type === 'bool';
+                                        const isOn = /^(TRUE|Y)$/i.test(val.trim());
+                                        const wide = !isBool && meta.type !== 'number';
+                                        const saveBtn = changed && (
+                                            <button onClick={() => saveSetting(r.Key)} disabled={busy} className="shrink-0 px-4 h-9 rounded-[10px] bg-[#007AFF] text-white text-[15px] font-semibold disabled:opacity-50">บันทึก</button>
+                                        );
+                                        return (
+                                            <div key={r.Key} className="px-4 py-3.5 border-b border-gray-100 last:border-0">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="text-[16px] text-black leading-snug">{meta.label || r.Description || r.Key}</div>
+                                                        <div className="text-[11px] text-gray-400 font-mono truncate">{r.Key}</div>
+                                                    </div>
+                                                    {saveBtn}
+                                                    {isBool ? (
+                                                        <button type="button" role="switch" aria-checked={isOn} onClick={() => edit(isOn ? 'FALSE' : 'TRUE')}
+                                                            className={`${isOn ? 'bg-[#34C759]' : 'bg-[#E9E9EA]'} relative inline-flex h-[31px] w-[51px] shrink-0 rounded-full transition-colors duration-300`}>
+                                                            <span className={`${isOn ? 'translate-x-[22px]' : 'translate-x-[2px]'} inline-block h-[27px] w-[27px] mt-[2px] rounded-full bg-white shadow transition duration-300`} />
+                                                        </button>
+                                                    ) : !wide && (
+                                                        <div className="flex items-center gap-1.5 shrink-0">
+                                                            <input type="number" inputMode="numeric" value={val} onChange={e => edit(e.target.value)}
+                                                                className="w-[72px] bg-gray-100 rounded-[10px] px-3 py-2 text-[16px] text-black text-right outline-none tabular-nums" />
+                                                            {meta.unit && <span className="text-[14px] text-gray-500 w-8">{meta.unit}</span>}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                {wide && (
+                                                    <input value={val} onChange={e => edit(e.target.value)} placeholder={meta.hint || ''} className={`${FIELD} mt-2 font-mono text-[14px]`} />
+                                                )}
+                                                {meta.warn && <div className="text-[12px] text-[#FF9500] mt-1.5">{meta.warn}</div>}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )
+                        )}
+                    </div>
+
+                    {editor && editor.kind === 'session' && (
+                        <AdminSheet title={editor.data.Session_ID ? `แก้ไขรอบ ${editor.data.Session_ID}` : 'เพิ่มรอบตี'} busy={busy}
+                            onClose={() => setEditor(null)} onSave={saveSession} onDelete={editor.data.Session_ID ? deleteSession : null}>
+                            <AdminField label="วันที่"><input type="date" value={editor.data.date} onChange={e => setData({ date: e.target.value })} className={FIELD} /></AdminField>
+                            <AdminField label="ประเภท">
+                                <select value={editor.data.type} onChange={e => setData({ type: e.target.value })} className={FIELD}>
+                                    <option value="Workday">วันธรรมดา</option><option value="Weekend">วันหยุด</option>
+                                </select>
+                            </AdminField>
+                            <AdminField label="สนาม"><input value={editor.data.location} onChange={e => setData({ location: e.target.value })} className={FIELD} /></AdminField>
+                            <AdminField label="สถานะ">
+                                <select value={editor.data.status} onChange={e => setData({ status: e.target.value })} className={FIELD}>
+                                    <option value="Open">เปิดรับ</option><option value="Closed">ปิดรับ</option><option value="Cancelled">งด</option>
+                                </select>
+                            </AdminField>
+                            <AdminField label="ค่าคอร์ด (บาท)"><input type="number" inputMode="numeric" value={editor.data.cost} onChange={e => setData({ cost: e.target.value })} className={FIELD} /></AdminField>
+                        </AdminSheet>
+                    )}
+
+                    {editor && editor.kind === 'user' && (
+                        <AdminSheet title={editor.data.User_ID ? 'แก้ไขสมาชิก' : 'เพิ่มสมาชิก'} busy={busy}
+                            onClose={() => setEditor(null)} onSave={saveUser} onDelete={editor.data.User_ID ? deleteUser : null}
+                            extra={editor.data.User_ID && editor.data.linked && (
+                                <button onClick={unlinkUser} disabled={busy} className="w-full bg-white rounded-[14px] shadow-sm py-3.5 mb-3 text-[17px] text-[#FF9500] active:bg-gray-50 disabled:opacity-50">ปลดการผูก LINE</button>
+                            )}>
+                            <AdminField label="ชื่อ"><input value={editor.data.name} onChange={e => setData({ name: e.target.value })} className={FIELD} /></AdminField>
+                            <AdminField label="ระดับฝีมือ"><input value={editor.data.skill} onChange={e => setData({ skill: e.target.value })} className={FIELD} /></AdminField>
+                        </AdminSheet>
+                    )}
+                </div>
+            );
+        }
+
         // ===================== App =====================
         function BadmintonApp() {
             // ---- data ----
@@ -444,6 +844,7 @@
             const [copied, setCopied] = useState(false);
 
             // ---- admin manager ----
+            const [showAdminPage, setShowAdminPage] = useState(false);
             const [showAdminManager, setShowAdminManager] = useState(false);
             const [amData, setAmData] = useState([]);
             const [amExistingId, setAmExistingId] = useState("");
@@ -659,14 +1060,21 @@
                     return t;
                 };
                 let body;
-                if (si.isWorkday) {
+                if (si.isWorkday && si.regs.every(r => hoursOf(r) === 'All')) {
+                    body = `⌚18:00 - 20:00\n${numbered(si.regs, si.cap)}`;
+                } else if (si.isWorkday) {
                     const l1 = si.regs.filter(inH1), l2 = si.regs.filter(inH2);
-                    body = `⌚18:00 - 19:00 (${l1.length}/${si.cap})\n${numbered(l1, si.cap)}\n⌚19:00 - 20:00 (${l2.length}/${si.cap})\n${numbered(l2, si.cap)}`;
+                    body = `⌚18:00 - 19:00\n${numbered(l1, si.cap)}\n⌚19:00 - 20:00\n${numbered(l2, si.cap)}`;
                 } else {
                     body = `⌚16:00 - 18:00 (ขั้นต่ำ ${si.min} คน ลงได้ถึง ${fmtShort(si.lastRegDay)})\n${numbered(si.regs, Math.max(si.min, si.regs.length + 1))}`;
                 }
-                setLineText(`${head}\n${costStr}\n\n${body}\n🏸🏸🏸🏸🏸\nลงชื่อตีแบด ${LIFF_URL}`);
-            }, [selected, nameById, rules]);
+                setLineText(renderLineTemplate(appSettings.LINE_POST_TEMPLATE, {
+                    'วัน': `วัน${TH_DAYS[d.getDay()]} ${d.getDate()}-${d.getMonth() + 1}-${String(d.getFullYear()).slice(-2)}`,
+                    'หัวข้อ': head, 'วันที่': fmtLong(d), 'สนาม': s.Location || '', 'เวลา': timeRange(si.isWorkday),
+                    'ค่าคอร์ด': c.court, 'ค่าลูก': c.shuttle, 'คนละ': c.perHead, 'หาร': c.splitBy,
+                    'ค่าใช้จ่าย': costStr, 'รายชื่อ': body.replace(/\n+$/, ''), 'ลิงก์': SHORT_LIFF_URL
+                }));
+            }, [selected, nameById, rules, appSettings]);
 
             // ---------- handlers ----------
             const openSession = (id) => {
@@ -738,6 +1146,23 @@
                 }
                 setCopied(true);
                 setTimeout(() => setCopied(false), 2000);
+            };
+
+            // แชร์ข้อความเข้ากลุ่ม LINE: ใช้ตัวเลือกกลุ่มของ LIFF ถ้ามี ไม่งั้นเปิดหน้าแชร์ของ LINE
+            const handleShareLineText = async () => {
+                const text = lineText.trim();
+                if (!text) return;
+                try {
+                    if (liffReady && liff.isApiAvailable('shareTargetPicker')) {
+                        const res = await liff.shareTargetPicker([{ type: 'text', text: text.slice(0, 5000) }]);
+                        if (res && res.status === 'success') showToast('ส่งเข้า LINE แล้ว');
+                        return;
+                    }
+                } catch (e) {
+                    showToast('เปิดตัวเลือกกลุ่มไม่ได้ ใช้ปุ่มคัดลอกแทนได้', 'error');
+                    return;
+                }
+                window.open('https://line.me/R/share?text=' + encodeURIComponent(text), '_blank');
             };
 
             // ---------- admin manager ----------
@@ -918,6 +1343,10 @@
                                     <div className="font-medium text-[20px] text-black truncate">{currentUser.DisplayName}</div>
                                     <div className="text-[13px] text-gray-500">{isAdminUser ? 'แอดมิน' : 'สมาชิก'}</div>
                                 </div>
+                                {isAdminUser && (
+                                    <button onClick={() => { scrollPositionRef.current = 0; setShowAdminPage(true); }}
+                                        className="shrink-0 px-4 h-8 rounded-full bg-gray-200/80 text-[15px] font-medium text-black active:opacity-70">จัดการข้อมูล</button>
+                                )}
                             </div>
 
                             <SectionTitle>รอบที่กำลังจะมา</SectionTitle>
@@ -1161,15 +1590,18 @@
                             {isAdminUser && (
                                 <div className="mb-8">
                                     <SectionTitle right={
-                                        <button onClick={handleCopyLineText} className={`text-[15px] font-medium ${copied ? 'text-[#34C759]' : 'text-[#007AFF] active:opacity-70'}`}>
-                                            {copied ? 'คัดลอกแล้ว' : 'คัดลอก'}
-                                        </button>
+                                        <span className="flex items-center gap-4">
+                                            <button onClick={handleCopyLineText} className={`text-[15px] font-medium ${copied ? 'text-[#34C759]' : 'text-[#007AFF] active:opacity-70'}`}>
+                                                {copied ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                                            </button>
+                                            <button onClick={handleShareLineText} className="text-[15px] font-medium text-[#06C755] active:opacity-70">แชร์เข้า LINE</button>
+                                        </span>
                                     }>ข้อความโพสต์ LINE</SectionTitle>
                                     <div className="bg-white rounded-[20px] overflow-hidden shadow-sm">
                                         <textarea id="line-export-text" rows="16" value={lineText} onChange={e => setLineText(e.target.value)}
                                             className="w-full p-4 text-[15px] text-black bg-transparent outline-none resize-y" />
                                     </div>
-                                    <p className="text-[13px] text-gray-500 px-4 mt-2">แก้ข้อความก่อนคัดลอกได้</p>
+                                    <p className="text-[13px] text-gray-500 px-4 mt-2">แก้ข้อความก่อนคัดลอกหรือแชร์ได้</p>
                                 </div>
                             )}
                         </div>
@@ -1282,7 +1714,10 @@
                 <div className="min-h-screen relative">
                     <Toast message={toast.message} type={toast.type} />
                     {submitting && <GlobalLoader />}
-                    {selected ? renderDetail() : renderHome()}
+                    {showAdminPage && isAdminUser
+                        ? <AdminPanel sessions={sessions} users={users} registrations={allRegistrations}
+                            sendApiRequest={sendApiRequest} onChanged={fetchAllData} onClose={() => setShowAdminPage(false)} showToast={showToast} />
+                        : selected ? renderDetail() : renderHome()}
                 </div>
             );
         }
