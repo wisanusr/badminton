@@ -33,6 +33,32 @@
         @keyframes sheetIn { from { transform: translateY(100%); } to { transform: translateY(0); } }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* กระจกแบบ iOS 26 (Liquid Glass): พื้นโปร่ง + เบลอ + เพิ่มความสด + ขอบสะท้อนแสงด้านในและเงานุ่มด้านนอก */
+        .glass-bar {
+            background: rgba(255, 255, 255, 0.42);
+            -webkit-backdrop-filter: blur(22px) saturate(180%);
+            backdrop-filter: blur(22px) saturate(180%);
+            box-shadow:
+                inset 0 1.5px 0 rgba(255, 255, 255, 0.9),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.35),
+                inset 1px 0 0 rgba(255, 255, 255, 0.5),
+                inset -1px 0 0 rgba(255, 255, 255, 0.5),
+                0 10px 32px rgba(0, 0, 0, 0.14),
+                0 2px 6px rgba(0, 0, 0, 0.06);
+            border: 0.5px solid rgba(255, 255, 255, 0.55);
+        }
+        .glass-pill {
+            background: rgba(255, 255, 255, 0.55);
+            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                inset 0 -1px 2px rgba(0, 0, 0, 0.05),
+                0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+            .glass-bar { background: rgba(255, 255, 255, 0.92); }
+        }
         .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
         .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
         .tabular-nums { font-variant-numeric: tabular-nums; }
@@ -282,6 +308,57 @@
                     <div className="h-1.5 w-full bg-gray-100 rounded-full mt-4" />
                 </div>
             </div>
+        );
+
+        // ===================== ไอคอนแถบเมนู (สไตล์ iOS: เส้นบางเมื่อไม่เลือก / ทึบเมื่อเลือก) =====================
+        const TabSvg = ({ size, children }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+        );
+        const WHITE = { stroke: '#fff' };
+        const TabIconClock = ({ size = 24, filled }) => (
+            <TabSvg size={size}>
+                <circle cx="12" cy="12" r="9.2" fill={filled ? 'currentColor' : 'none'} />
+                <path d="M12 7v5.2l3.4 2" {...(filled ? WHITE : {})} />
+            </TabSvg>
+        );
+        const TabIconCheck = ({ size = 24, filled }) => (
+            <TabSvg size={size}>
+                <circle cx="12" cy="12" r="9.2" fill={filled ? 'currentColor' : 'none'} />
+                <path d="M7.8 12.4l3 3 5.4-6" {...(filled ? WHITE : {})} />
+            </TabSvg>
+        );
+        const TabIconPlus = ({ size = 24, filled }) => (
+            <TabSvg size={size}>
+                <circle cx="12" cy="12" r="9.2" fill={filled ? 'currentColor' : 'none'} />
+                <path d="M12 7.8v8.4M7.8 12h8.4" {...(filled ? WHITE : {})} />
+            </TabSvg>
+        );
+        const TabIconSun = ({ size = 24, filled }) => (
+            <TabSvg size={size}>
+                <circle cx="12" cy="12" r="4.2" fill={filled ? 'currentColor' : 'none'} />
+                <path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M5.5 18.5l1.4-1.4M17.1 6.9l1.4-1.4" />
+            </TabSvg>
+        );
+        const TabIconCash = ({ size = 24, filled }) => (
+            <TabSvg size={size}>
+                <rect x="2.5" y="6" width="19" height="12" rx="3" fill={filled ? 'currentColor' : 'none'} />
+                <circle cx="12" cy="12" r="2.6" {...(filled ? WHITE : {})} />
+            </TabSvg>
+        );
+
+        // ===================== แถบเมนูด้านล่าง =====================
+        const BottomBar = ({ tabs }) => (
+            <nav className="fixed bottom-0 left-0 w-full z-50 pointer-events-none px-4" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)' }}>
+                <div className="pointer-events-auto max-w-md mx-auto glass-bar flex gap-1 p-1.5 rounded-full">
+                    {tabs.map(({ key, label, Icon, active, onClick }) => (
+                        <button key={key} onClick={onClick} aria-current={active ? 'page' : undefined}
+                            className={`flex-1 flex flex-col items-center gap-0.5 py-2 rounded-full transition-all duration-200 active:scale-95 ${active ? 'glass-pill text-[#007AFF]' : 'text-gray-500'}`}>
+                            <Icon size={25} filled={active} />
+                            <span className={`text-[11px] leading-none ${active ? 'font-semibold' : 'font-medium'}`}>{label}</span>
+                        </button>
+                    ))}
+                </div>
+            </nav>
         );
 
         // ===================== Session card (หน้าแรก) =====================
@@ -1325,11 +1402,11 @@
                     : filterDay === 'Weekend' ? 'ยังไม่มีรอบวันหยุด'
                     : 'ยังไม่มีรอบตีที่เปิดอยู่';
                 const tabs = [
-                    { key: 'all', label: 'เร็ว ๆ นี้', Icon: IconClock, active: filterMyStatus === 'All' && filterDay === 'All', onClick: () => { setFilterMyStatus('All'); setFilterDay('All'); window.scrollTo({ top: 0, behavior: 'smooth' }); } },
-                    { key: 'joined', label: 'ลงแล้ว', Icon: IconCheckCircle, active: filterMyStatus === 'Joined', onClick: () => { setFilterMyStatus(p => p === 'Joined' ? 'All' : 'Joined'); setFilterDay('All'); } },
-                    { key: 'notjoined', label: 'ยังไม่ลง', Icon: IconCircle, active: filterMyStatus === 'NotJoined', onClick: () => { setFilterMyStatus(p => p === 'NotJoined' ? 'All' : 'NotJoined'); setFilterDay('All'); } },
-                    { key: 'weekend', label: 'วันหยุด', Icon: IconSun, active: filterDay === 'Weekend', onClick: () => { setFilterDay(p => p === 'Weekend' ? 'All' : 'Weekend'); setFilterMyStatus('All'); } },
-                    { key: 'point', label: 'ทวงแต้ม', Icon: IconBanknote, active: false, onClick: () => window.open(POINT_URL, '_blank') }
+                    { key: 'all', label: 'เร็ว ๆ นี้', Icon: TabIconClock, active: filterMyStatus === 'All' && filterDay === 'All', onClick: () => { setFilterMyStatus('All'); setFilterDay('All'); window.scrollTo({ top: 0, behavior: 'smooth' }); } },
+                    { key: 'joined', label: 'ลงแล้ว', Icon: TabIconCheck, active: filterMyStatus === 'Joined', onClick: () => { setFilterMyStatus(p => p === 'Joined' ? 'All' : 'Joined'); setFilterDay('All'); } },
+                    { key: 'notjoined', label: 'ยังไม่ลง', Icon: TabIconPlus, active: filterMyStatus === 'NotJoined', onClick: () => { setFilterMyStatus(p => p === 'NotJoined' ? 'All' : 'NotJoined'); setFilterDay('All'); } },
+                    { key: 'weekend', label: 'วันหยุด', Icon: TabIconSun, active: filterDay === 'Weekend', onClick: () => { setFilterDay(p => p === 'Weekend' ? 'All' : 'Weekend'); setFilterMyStatus('All'); } },
+                    { key: 'point', label: 'ทวงแต้ม', Icon: TabIconCash, active: false, onClick: () => window.open(POINT_URL, '_blank') }
                 ];
 
                 return (
@@ -1380,17 +1457,7 @@
                             )}
                         </main>
 
-                        <div className="fixed bottom-0 left-0 w-full bg-white/85 backdrop-blur-xl border-t border-gray-200 z-50 pb-safe">
-                            <div className="max-w-md mx-auto flex px-2">
-                                {tabs.map(({ key, label, Icon, active, onClick }) => (
-                                    <button key={key} onClick={onClick}
-                                        className={`flex flex-col items-center gap-1 flex-1 py-2 transition-colors ${active ? 'text-[#007AFF]' : 'text-gray-400'}`}>
-                                        <Icon size={24} />
-                                        <span className="text-[10px] font-medium">{label}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
+                        <BottomBar tabs={tabs} />
                     </>
                 );
             };
