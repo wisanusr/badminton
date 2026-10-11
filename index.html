@@ -249,9 +249,18 @@
             );
         };
 
-        const NameChip = ({ name, isMe, size = 'sm' }) => (
-            <span className={`${size === 'lg' ? 'px-3 py-1.5 text-[16px]' : 'px-2.5 py-1 text-[13px]'} rounded-full font-medium ${isMe ? 'bg-[#007AFF] text-white' : 'bg-gray-100 text-gray-700'}`}>{name}</span>
-        );
+        const NameChip = ({ name, isMe, picture, size = 'sm' }) => {
+            const lg = size === 'lg';
+            const dim = lg ? 'w-7 h-7' : 'w-5 h-5';
+            return (
+                <span className={`${lg ? 'pl-1.5 pr-3 py-1.5 text-[16px]' : 'pl-1 pr-2.5 py-1 text-[13px]'} inline-flex items-center gap-1.5 rounded-full font-medium ${isMe ? 'bg-[#007AFF] text-white' : 'bg-gray-100 text-gray-700'}`}>
+                    {picture
+                        ? <img src={picture} alt="" referrerPolicy="no-referrer" className={`${dim} rounded-full object-cover shrink-0`} />
+                        : <span className={`${dim} rounded-full shrink-0 flex items-center justify-center text-[11px] ${isMe ? 'bg-white/25' : 'bg-gray-200 text-gray-500'}`}>{String(name).charAt(0)}</span>}
+                    {name}
+                </span>
+            );
+        };
 
         const SessionSkeleton = () => (
             <div className="bg-white rounded-[20px] shadow-sm p-4 animate-pulse flex gap-3.5">
@@ -265,7 +274,7 @@
         );
 
         // ===================== Session card (หน้าแรก) =====================
-        const SessionCard = ({ s, info, rules, myId, getUserName, showTasks, onOpen }) => {
+        const SessionCard = ({ s, info, rules, myId, getUserName, getUserPicture, showTasks, onOpen }) => {
             const mine = info.regs.some(r => String(r.User_ID) === myId);
             const dim = info.isPast || info.isCancelled;
             const pendingTasks = showTasks && info.isPast && !info.isCancelled ? TASKS.filter(t => !isTrue(s[t.key])) : [];
@@ -316,7 +325,7 @@
                             {info.regs.length > 0 && (
                                 <div className="flex flex-wrap gap-1.5 pt-1">
                                     {info.regs.map((r, i) => (
-                                        <NameChip key={i} name={getUserName(r.User_ID)} isMe={String(r.User_ID) === myId} />
+                                        <NameChip key={i} name={getUserName(r.User_ID)} picture={getUserPicture(r.User_ID)} isMe={String(r.User_ID) === myId} />
                                     ))}
                                 </div>
                             )}
@@ -427,7 +436,6 @@
             const [isScrolled, setIsScrolled] = useState(false);
             const [isEditing, setIsEditing] = useState(false);
             const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-            const [isTimeSelectorOpen, setIsTimeSelectorOpen] = useState(false);
             const [selectedHour, setSelectedHour] = useState("All");
             const [extraShuttles, setExtraShuttles] = useState(0);
             const [pendingTasks, setPendingTasks] = useState({});
@@ -562,6 +570,11 @@
                 return m;
             }, [users]);
             const getUserName = (id) => nameById[String(id)] || 'ไม่ทราบชื่อ';
+            const getUserPicture = (id) => {
+                if (String(id) === myId && lineProfile && lineProfile.picture) return lineProfile.picture;
+                const u = users.find(x => String(x.User_ID) === String(id));
+                return (u && (u.Picture_URL || u.Picture)) || '';
+            };
 
             const sessionInfos = useMemo(() => sessions
                 .filter(s => s.Session_ID && String(s.Status || '').trim() !== '' && !isNaN(parseSessionDate(s.Date).getTime()))
@@ -664,7 +677,7 @@
             const handleCreateProfile = async (name) => {
                 setSubmitting(true);
                 try {
-                    const r = await sendApiRequest("createProfile", { display_name: name });
+                    const r = await sendApiRequest("createProfile", { display_name: name, picture_url: (lineProfile && lineProfile.picture) || "" });
                     if (r.status === "success") { applyUser(r.data); await fetchAllData(); }
                     else showToast(r.message, "error");
                 } catch (e) { showToast(e.message, "error"); }
@@ -675,28 +688,18 @@
                 if (!window.confirm(`ยืนยันว่าคุณคือ "${u.DisplayName}" ใช่ไหม?\nเลือกแล้วเปลี่ยนเองไม่ได้`)) return;
                 setSubmitting(true);
                 try {
-                    const r = await sendApiRequest("linkProfile", { user_id: u.User_ID });
+                    const r = await sendApiRequest("linkProfile", { user_id: u.User_ID, picture_url: (lineProfile && lineProfile.picture) || "" });
                     if (r.status === "success") { applyUser(r.data); await fetchAllData(); }
                     else showToast(r.message, "error");
                 } catch (e) { showToast(e.message, "error"); }
                 finally { setSubmitting(false); }
             };
 
-            const handleLogout = () => {
-                if (!window.confirm('ออกจากระบบใช่ไหม?')) return;
-                if (liffReady) liff.logout();
-                window.location.reload();
-            };
-
             const handleRegister = async () => {
-                const hour = info.isWorkday ? selectedHour : 'All';
-                if (info.isWorkday && ((hour === 'All' && disableAll) || (hour === H1 && disableH1) || (hour === H2 && disableH2))) {
-                    return showToast('ชั่วโมงที่เลือกเต็มแล้ว', 'error');
-                }
-                const ok = await runAction('register',
-                    { session_id: selectedSession.Session_ID, hours_joined: hour },
-                    myReg ? 'เปลี่ยนเวลาแล้ว' : 'ลงชื่อสำเร็จ!');
-                if (ok) setIsEditing(false);
+                if (info.isWorkday && disableAll) return showToast('รอบนี้เต็มแล้ว', 'error');
+                await runAction('register',
+                    { session_id: selectedSession.Session_ID, hours_joined: 'All' },
+                    'ลงชื่อสำเร็จ!');
             };
 
             const handleCancel = async () => {
@@ -734,11 +737,6 @@
                 }
                 setCopied(true);
                 setTimeout(() => setCopied(false), 2000);
-            };
-
-            const handleSharePublic = () => {
-                const url = `${window.location.origin}${window.location.pathname}?public=true`;
-                navigator.clipboard.writeText(url).then(() => showToast("คัดลอกลิงก์หน้า Public แล้ว"));
             };
 
             // ---------- admin manager ----------
@@ -911,19 +909,17 @@
                         <main className="max-w-md mx-auto w-full px-4 pb-32 animate-in" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 2.5rem)' }}>
                             <h1 className="text-[34px] font-bold text-black mb-5 px-1 tracking-tight">{APP_NAME}</h1>
 
-                            <button onClick={handleLogout} className="w-full bg-white rounded-[20px] mb-8 p-4 flex items-center gap-4 shadow-sm active:bg-gray-50 text-left">
+                            <div className="w-full bg-white rounded-[20px] mb-8 p-4 flex items-center gap-4 shadow-sm text-left">
                                 {lineProfile && lineProfile.picture
                                     ? <img src={lineProfile.picture} alt="" className="w-[56px] h-[56px] rounded-full" />
                                     : <div className="w-[56px] h-[56px] bg-gray-100 rounded-full flex items-center justify-center text-3xl">🏸</div>}
                                 <div className="flex-1 min-w-0">
                                     <div className="font-medium text-[20px] text-black truncate">{currentUser.DisplayName}</div>
-                                    <div className="text-[13px] text-gray-500">{isAdminUser ? 'แอดมิน' : 'สมาชิก'} • แตะเพื่อออกจากระบบ</div>
+                                    <div className="text-[13px] text-gray-500">{isAdminUser ? 'แอดมิน' : 'สมาชิก'}</div>
                                 </div>
-                            </button>
+                            </div>
 
-                            <SectionTitle right={isAdminUser && (
-                                <button onClick={handleSharePublic} className="text-[#007AFF] text-[15px] font-medium active:opacity-70">Share Link</button>
-                            )}>รอบที่กำลังจะมา</SectionTitle>
+                            <SectionTitle>รอบที่กำลังจะมา</SectionTitle>
 
                             <div className="flex flex-col gap-3 mb-8">
                                 {loading && sessionInfos.length === 0 ? (
@@ -935,7 +931,7 @@
                                     </div>
                                 ) : homeList.upcoming.map(({ s, info: si }) => (
                                     <SessionCard key={s.Session_ID} s={s} info={si} rules={rules} myId={myId}
-                                        getUserName={getUserName} showTasks={isAdminUser} onOpen={() => openSession(s.Session_ID)} />
+                                        getUserName={getUserName} getUserPicture={getUserPicture} showTasks={isAdminUser} onOpen={() => openSession(s.Session_ID)} />
                                 ))}
                             </div>
 
@@ -945,7 +941,7 @@
                                     <div className="flex flex-col gap-3">
                                         {homeList.past.map(({ s, info: si }) => (
                                             <SessionCard key={s.Session_ID} s={s} info={si} rules={rules} myId={myId}
-                                                getUserName={getUserName} showTasks={isAdminUser} onOpen={() => openSession(s.Session_ID)} />
+                                                getUserName={getUserName} getUserPicture={getUserPicture} showTasks={isAdminUser} onOpen={() => openSession(s.Session_ID)} />
                                         ))}
                                     </div>
                                 </>
@@ -979,19 +975,13 @@
                 const extraChanged = extraShuttles !== (Number(s.Extra_Shuttles) || 0);
 
                 const rulesText = si.isWorkday
-                    ? `ชั่วโมงละไม่เกิน ${si.cap} คน ลงชื่อ เปลี่ยนเวลา หรือยกเลิกได้จนถึงวันเล่น`
+                    ? `ชั่วโมงละไม่เกิน ${si.cap} คน ลงชื่อหรือยกเลิกได้จนถึงวันเล่น`
                     : `ไม่จำกัดจำนวน แต่ต้องมีอย่างน้อย ${si.min} คน ลงชื่อได้ถึง${TH_DAYS[si.lastRegDay.getDay()]}ที่ ${si.lastRegDay.getDate()} ${TH_MONTHS_SHORT[si.lastRegDay.getMonth()]} ถ้าไม่ครบระบบจะงดรอบและแจ้งทาง LINE`;
 
                 const closedReason = si.isPast ? 'รอบนี้จบแล้ว'
                     : !si.isOpen ? 'รอบนี้ปิดรับลงชื่อ'
                     : (!si.isWorkday && si.weekendClosed) ? `ปิดรับลงชื่อแล้ว (ปิดก่อนวันเล่น ${rules.WEEKEND_CLOSE_DAYS} วัน)`
                     : 'เต็มทั้ง 2 ชั่วโมงแล้ว';
-
-                const hourOptions = [
-                    { value: 'All', label: 'ทั้ง 2 ชั่วโมง (18:00-20:00)', disabled: disableAll, note: disableAll ? 'มีชั่วโมงที่เต็ม' : '' },
-                    { value: H1, label: '18:00 - 19:00', disabled: disableH1, note: `${h1Others}/${cap}` },
-                    { value: H2, label: '19:00 - 20:00', disabled: disableH2, note: `${h2Others}/${cap}` }
-                ];
 
                 const oneHourPlayers = si.isWorkday && currentRegs.some(r => hoursOf(r) !== 'All');
                 const PlayerBox = ({ title, list, target }) => (
@@ -1002,7 +992,7 @@
                         </div>
                         <div className="p-4 flex flex-wrap gap-2">
                             {list.length === 0 && <span className="text-gray-400 text-[14px]">ยังไม่มี</span>}
-                            {list.map((p, i) => <NameChip key={i} size="lg" name={getUserName(p.User_ID)} isMe={String(p.User_ID) === myId} />)}
+                            {list.map((p, i) => <NameChip key={i} size="lg" name={getUserName(p.User_ID)} picture={getUserPicture(p.User_ID)} isMe={String(p.User_ID) === myId} />)}
                         </div>
                     </div>
                 );
@@ -1046,12 +1036,6 @@
                                         <Row label="เวลาเล่น" value={hoursLabel(hoursOf(myReg), si.isWorkday)} last={si.isPast} />
                                         {si.isPast ? null : (
                                             <>
-                                                {si.isWorkday && si.isOpen && (
-                                                    <button onClick={() => setIsEditing(true)} disabled={submitting}
-                                                        className="w-full p-4 text-center text-[#007AFF] text-[17px] active:bg-gray-50 border-b border-gray-200">
-                                                        เปลี่ยนเวลา
-                                                    </button>
-                                                )}
                                                 <button onClick={() => setShowCancelConfirm(true)} disabled={submitting}
                                                     className="w-full p-4 text-center text-[#FF3B30] text-[17px] active:bg-gray-50">
                                                     ไม่สะดวกเล่นแล้ว
@@ -1066,28 +1050,11 @@
                                     </div>
                                 ) : (
                                     <>
-                                        {si.isWorkday ? (
-                                            <button type="button" disabled={submitting} onClick={() => setIsTimeSelectorOpen(true)}
-                                                className="w-full p-4 flex justify-between items-center active:bg-gray-50 border-b border-gray-200">
-                                                <span className="text-[17px] text-black">เวลา</span>
-                                                <span className="flex items-center gap-1.5 text-[17px] text-gray-500">
-                                                    {hoursLabel(selectedHour, true)}
-                                                    <IconChevronRight className="text-gray-300" size={20} />
-                                                </span>
-                                            </button>
-                                        ) : (
-                                            <Row label="เวลา" value="16:00-18:00" />
-                                        )}
+                                        <Row label="เวลา" value={timeRange(si.isWorkday)} />
                                         <Row label="ค่าใช้จ่าย" value={`คนละ ${si.costs.perHead} ฿`} />
-                                        {isEditing && (
-                                            <button type="button" disabled={submitting} onClick={() => setIsEditing(false)}
-                                                className="w-full p-4 text-center text-gray-500 text-[17px] active:bg-gray-50 border-b border-gray-200">
-                                                ไม่เปลี่ยน
-                                            </button>
-                                        )}
                                         <button type="button" onClick={handleRegister} disabled={submitting}
                                             className="w-full p-4 text-center font-semibold text-[#007AFF] text-[17px] active:bg-gray-50 disabled:opacity-50">
-                                            {submitting ? 'กำลังบันทึก...' : isEditing ? 'บันทึกเวลาใหม่' : 'ลงชื่อ'}
+                                            {submitting ? 'กำลังบันทึก...' : 'ลงชื่อ'}
                                         </button>
                                     </>
                                 )}
@@ -1212,30 +1179,6 @@
                                 </div>
                             )}
                         </div>
-
-                        {/* Time picker */}
-                        {isTimeSelectorOpen && ReactDOM.createPortal(
-                            <div className="fixed inset-0 z-[200] flex flex-col justify-end">
-                                <div className="absolute inset-0 bg-black/40" onClick={() => setIsTimeSelectorOpen(false)} />
-                                <div className="relative w-full max-w-md mx-auto p-2 pb-safe sheet-in">
-                                    <div className="bg-white rounded-[14px] overflow-hidden mb-2">
-                                        <div className="p-3 text-center text-[13px] text-gray-500 font-medium border-b border-gray-200">เลือกเวลา (ชั่วโมงละไม่เกิน {cap} คน)</div>
-                                        {hourOptions.map((o, i) => (
-                                            <button key={o.value} type="button" disabled={o.disabled}
-                                                onClick={() => { setSelectedHour(o.value); setIsTimeSelectorOpen(false); }}
-                                                className={`w-full p-4 text-center text-[19px] active:bg-gray-100 ${i < hourOptions.length - 1 ? 'border-b border-gray-200' : ''} ${o.disabled ? 'text-gray-300' : 'text-[#007AFF]'}`}>
-                                                {o.label}
-                                                {o.note && <span className="text-[14px] ml-2 text-gray-400">{o.disabled && o.value !== 'All' ? 'เต็ม' : o.note}</span>}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <button type="button" onClick={() => setIsTimeSelectorOpen(false)} className="w-full p-4 bg-white rounded-[14px] text-center text-[19px] font-semibold text-[#007AFF] active:bg-gray-100">
-                                        ปิด
-                                    </button>
-                                </div>
-                            </div>,
-                            document.body
-                        )}
 
                         {/* Admin manager */}
                         {showAdminManager && (
