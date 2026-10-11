@@ -424,7 +424,9 @@
             COST_SPLIT_BASE:      { label: 'ค่าใช้จ่ายหารสูงสุด', unit: 'คน', type: 'number' },
             SHUTTLES_PER_SESSION: { label: 'ลูกแบดที่รวมในค่าคอร์ดต่อรอบ', unit: 'ลูก', type: 'number' },
             SHUTTLECOCK_PRICE:    { label: 'ราคาลูกแบด', unit: 'บาท', type: 'number' },
-            NOTIFY_CANCEL:        { label: 'แจ้งแอดมินทาง LINE เมื่อมีคนยกเลิก', type: 'bool' }
+            NOTIFY_CANCEL:        { label: 'แจ้งแอดมินทาง LINE เมื่อมีคนยกเลิก', type: 'bool' },
+            NOTIFY_PLAY_DAY:      { label: 'แจ้งแอดมิน 10:00 ในวันเล่น พร้อมข้อความโพสต์', type: 'bool' },
+            BOOK_NOTICE_DAYS:     { label: 'วันหยุด: แจ้งจำนวนคนก่อนวันเล่น (จองคอร์ด)', unit: 'วัน', type: 'number' }
         };
         const HIDDEN_SETTING_KEYS = ['ADMIN_LINE_IDS', 'LINE_CHANNEL_ID', 'LINE_POST_TEMPLATE'];
         const SAMPLE_TPL_VARS = {
