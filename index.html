@@ -77,7 +77,6 @@
         const APP_NAME = "แทนที่จะตีแบด";
         const POINT_URL = "https://lin.ee/pIMi2X1";
         const LIFF_URL = `https://liff.line.me/${LIFF_ID}`;
-        const SHORT_LIFF_URL = "https://lllllllI.llIlI.lI";                 // ลิงก์ย่อของ LIFF ใช้ในข้อความโพสต์ LINE
         let liffReady = false;
 
         // ค่าเริ่มต้นของกติกา (ค่าจริงอ่านจากชีท Settings ชุดเดียวกับ Code.gs)
@@ -85,6 +84,7 @@
             WORKDAY_HOUR_CAP: 8,
             WEEKEND_CLOSE_DAYS: 2,
             WEEKEND_MIN_PLAYERS: 6,
+            WORKDAY_MIN_PLAYERS: 6,
             COST_SPLIT_BASE: 6,
             SHUTTLES_PER_SESSION: 2,
             SHUTTLECOCK_PRICE: 65
@@ -104,11 +104,12 @@
         const TH_DAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
         const TH_MONTHS_SHORT = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
         const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+        // เช็คลิสต์แอดมินหลังเล่น (Task1 เดิม "จองคอร์ด" เลิกใช้แล้ว Task3 เดิมใช้เป็น "เพิ่มลูกแบด")
         const TASKS = [
-            { key: 'Task1', label: 'จองคอร์ด' },
-            { key: 'Task2', label: 'เก็บเงินสมาชิก' },
-            { key: 'Task3', label: 'เก็บค่าลูกเพิ่ม' },
-            { key: 'Task4', label: 'แจกแต้ม' }
+            { key: 'Task3', label: 'เพิ่มลูกแบด' },
+            { key: 'Task2', label: 'เก็บเงิน' },
+            { key: 'Task4', label: 'แจกแต้ม' },
+            { key: 'Task5', label: 'โอนเงินเข้าบัญชี' }
         ];
         const TONES = {
             green: 'text-emerald-700 bg-emerald-50',
@@ -163,14 +164,16 @@
             const isOpen = s.Status === 'Open';
             const isPast = days < 0;
             const cap = rules.WORKDAY_HOUR_CAP;
-            const min = rules.WEEKEND_MIN_PLAYERS;
+            const min = isWorkday ? rules.WORKDAY_MIN_PLAYERS : rules.WEEKEND_MIN_PLAYERS;
             const h1 = regs.filter(inH1).length;
             const h2 = regs.filter(inH2).length;
             const weekendClosed = !isWorkday && days < rules.WEEKEND_CLOSE_DAYS;
             const lastRegDay = addDays(date, -rules.WEEKEND_CLOSE_DAYS);
 
             const court = parseFloat(s.Cost) || (isWorkday ? 200 : 120);
-            const shuttle = rules.SHUTTLECOCK_PRICE * rules.SHUTTLES_PER_SESSION;
+            const extraShuttles = Math.max(0, Number(s.Extra_Shuttles) || 0);   // ลูกที่เติมเพิ่มหน้างาน เก็บเงินหน้างานรวมใน "คนละ"
+            const shuttleCount = rules.SHUTTLES_PER_SESSION + extraShuttles;
+            const shuttle = rules.SHUTTLECOCK_PRICE * shuttleCount;
             const total = court + shuttle;
             // หารตามจำนวนคนจริง แต่ไม่เกิน COST_SPLIT_BASE (มาเกินกว่านี้ก็จ่ายเท่าราคาหาร 6)
             // ยังไม่มีคนลงชื่อ → แสดงราคาตอนครบ COST_SPLIT_BASE
@@ -185,7 +188,8 @@
             else if (isWorkday) {
                 if (h1 >= cap && h2 >= cap) badge = { text: 'เต็มแล้ว', tone: 'red' };
                 else if (h1 >= cap || h2 >= cap) badge = { text: 'เต็ม 1 ชม.', tone: 'amber' };
-                else badge = { text: 'ว่าง', tone: 'green' };
+                else if (regs.length < min) badge = { text: `ขาดอีก ${min - regs.length} คน`, tone: 'amber' };
+                else badge = { text: 'ครบแล้ว', tone: 'green' };
             } else if (weekendClosed) {
                 badge = regs.length >= min ? { text: 'ได้ไปต่อ', tone: 'green' } : { text: 'รอยืนยัน', tone: 'gray' };
             } else {
@@ -198,7 +202,7 @@
             return {
                 regs, date, days, isWorkday, isCancelled, isOpen, isPast, cap, min, h1, h2,
                 weekendClosed, lastRegDay, canRegister, badge,
-                costs: { court, shuttle, total, perHead, splitBy, fullPerHead }
+                costs: { court, shuttle, shuttleCount, extraShuttles, total, perHead, splitBy, fullPerHead }
             };
         };
 
@@ -263,16 +267,26 @@
         };
 
         // แถบจำนวนคน: mode "cap" = เต็มเมื่อถึงเพดาน, mode "min" = ผ่านเมื่อถึงขั้นต่ำ
-        const CapacityBar = ({ label, count, target, mode = 'cap' }) => {
+        // mode: 'cap' = เต็มเมื่อถึง target | 'min' = ต้องถึง target | 'range' = ขั้นต่ำ min (ขีดบนแถบ) เต็มที่ target
+        const CapacityBar = ({ label, count, target, min, mode = 'cap' }) => {
             const pct = Math.min(100, target > 0 ? (count / target) * 100 : 0);
             const reached = count >= target;
-            const barColor = mode === 'cap' ? (reached ? 'bg-rose-500' : 'bg-[#34C759]') : (reached ? 'bg-[#34C759]' : 'bg-amber-400');
-            const textColor = mode === 'cap' && reached ? 'text-rose-600 font-semibold' : 'text-gray-500';
+            let barColor, textColor = 'text-gray-500';
+            if (mode === 'range') {
+                barColor = reached ? 'bg-rose-500' : count >= min ? 'bg-[#34C759]' : 'bg-amber-400';
+                if (reached) textColor = 'text-rose-600 font-semibold';
+            } else {
+                barColor = mode === 'cap' ? (reached ? 'bg-rose-500' : 'bg-[#34C759]') : (reached ? 'bg-[#34C759]' : 'bg-amber-400');
+                if (mode === 'cap' && reached) textColor = 'text-rose-600 font-semibold';
+            }
             return (
                 <div className="flex items-center gap-2 text-[12px]">
                     <span className="w-12 text-gray-500 shrink-0">{label}</span>
-                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="relative flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                         <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
+                        {mode === 'range' && min > 0 && min < target && (
+                            <div className="absolute top-0 h-full w-[2px] bg-white/90 mix-blend-normal" style={{ left: `calc(${(min / target) * 100}% - 1px)` }} />
+                        )}
                     </div>
                     <span className={`w-10 text-right tabular-nums ${textColor}`}>{count}/{target}</span>
                 </div>
@@ -293,7 +307,7 @@
         };
 
         const WorkdayBars = ({ info }) => info.regs.every(r => hoursOf(r) === 'All')
-            ? <CapacityBar label="18-20 น." count={info.regs.length} target={info.cap} />
+            ? <CapacityBar label="18-20 น." count={info.regs.length} target={info.cap} min={info.min} mode="range" />
             : <>
                 <CapacityBar label="18-19 น." count={info.h1} target={info.cap} />
                 <CapacityBar label="19-20 น." count={info.h2} target={info.cap} />
@@ -401,7 +415,7 @@
                                 <CapacityBar label="ขั้นต่ำ" count={info.regs.length} target={info.min} mode="min" />
                             )}
                             <div className="flex items-center justify-between pt-1.5">
-                                <span className="text-[13px] text-gray-500">{info.regs.length > 0 ? `${info.regs.length} คน` : 'ยังไม่มีคนลงชื่อ'}</span>
+                                <span className="text-[13px] text-gray-500">{info.regs.length > 0 ? `${info.regs.length} คน` : 'ยังไม่มีคนลงชื่อ'}{info.isWorkday && ` • รับสูงสุด ${info.cap}`}</span>
                                 <span className="text-[14px] font-semibold text-black tabular-nums">
                                     {info.regs.length > 0 && info.costs.splitBy < rules.COST_SPLIT_BASE && <span className="text-[12px] font-normal text-gray-400 mr-1">ตอนนี้</span>}
                                     คนละ {info.costs.perHead} ฿
@@ -447,7 +461,7 @@
                             <div className="bg-[#F2F2F7] rounded-2xl p-5 mt-6">
                                 <h3 className="font-semibold text-black mb-3 text-[15px]">กติกาก๊วน</h3>
                                 <ol className="space-y-3 text-[14px] text-gray-600 list-decimal pl-5">
-                                    <li><b className="text-black">วันธรรมดา</b> ชั่วโมงละไม่เกิน {rules.WORKDAY_HOUR_CAP} คน ลงชื่อได้จนถึงวันเล่น</li>
+                                    <li><b className="text-black">วันธรรมดา</b> ขั้นต่ำ {rules.WORKDAY_MIN_PLAYERS} คน รับสูงสุด {rules.WORKDAY_HOUR_CAP} คน ลงชื่อได้จนถึงวันเล่น</li>
                                     <li><b className="text-black">วันหยุด</b> ไม่จำกัดจำนวน ปิดรับก่อนวันเล่น {rules.WEEKEND_CLOSE_DAYS} วัน ถ้าไม่ถึง {rules.WEEKEND_MIN_PLAYERS} คนจะงดรอบและแจ้งทาง LINE</li>
                                     <li><b className="text-black">ค่าใช้จ่าย</b> ค่าคอร์ด + ลูกแบด หารตามจำนวนคน มากันเกิน {rules.COST_SPLIT_BASE} คนก็จ่ายเท่าราคาหาร {rules.COST_SPLIT_BASE}</li>
                                     <li><b className="text-black">ติดธุระ</b> กดยกเลิกในระบบได้ตลอด เพื่อนจะได้เข้ามาแทน</li>
@@ -497,6 +511,7 @@
         const SETTING_META = {
             WORKDAY_HOUR_CAP:     { label: 'วันธรรมดา: รับสูงสุดต่อชั่วโมง', unit: 'คน', type: 'number' },
             WEEKEND_MIN_PLAYERS:  { label: 'วันหยุด: ขั้นต่ำถึงจะเล่น', unit: 'คน', type: 'number' },
+            WORKDAY_MIN_PLAYERS:  { label: 'วันธรรมดา: เป้าหมายขั้นต่ำ', unit: 'คน', type: 'number' },
             WEEKEND_CLOSE_DAYS:   { label: 'วันหยุด: ปิดรับก่อนวันเล่น', unit: 'วัน', type: 'number' },
             COST_SPLIT_BASE:      { label: 'ค่าใช้จ่ายหารสูงสุด', unit: 'คน', type: 'number' },
             SHUTTLES_PER_SESSION: { label: 'ลูกแบดที่รวมในค่าคอร์ดต่อรอบ', unit: 'ลูก', type: 'number' },
@@ -510,7 +525,7 @@
             'วัน': 'วันพฤหัสบดี 15-10-26', 'หัวข้อ': 'วันพฤหัสบดี/15/10/26 รพ.ศรีธัญญา', 'วันที่': 'พฤหัสบดี 15 ตุลาคม 2569', 'สนาม': 'รพ.ศรีธัญญา', 'เวลา': '18:00-20:00',
             'ค่าคอร์ด': 200, 'ค่าลูก': 130, 'คนละ': 55, 'หาร': 6,
             'ค่าใช้จ่าย': 'ค่าคอร์ด 200 บาท + ค่าลูก 130 บาท\nคนละ 55 บาท (หาร 6 คน)',
-            'รายชื่อ': '⌚18:00 - 20:00\n1. ครีม\n2. บูม\n3. นิวส์\n4.\n5.\n6.\n7.\n8.', 'ลิงก์': SHORT_LIFF_URL
+            'รายชื่อ': '⌚18:00 - 20:00\n1. ครีม\n2. บูม\n3. นิวส์\n4.\n5.\n6.\n7.\n8.', 'ลิงก์': LIFF_URL
         };
         const LINE_TPL_VARS = [
             ['วัน', 'วันพฤหัสบดี 15-10-26'], ['วันที่', 'วันเต็ม'], ['หัวข้อ', 'วัน/วันที่ สนาม'], ['สนาม', ''], ['เวลา', ''],
@@ -754,18 +769,12 @@
                                                 <button onClick={() => setRegRows(regRows.filter((_, j) => j !== i))}
                                                     className="w-8 h-8 rounded-full bg-[#FF3B30]/10 flex items-center justify-center text-[#FF3B30]"><IconTrash size={16} /></button>
                                             </div>
-                                            <div className="flex gap-2 mt-2">
-                                                {isWorkdayReg && (
-                                                    <select value={hoursOf(r)} onChange={e => patchReg(i, { Hours_Joined: e.target.value })}
-                                                        className="flex-1 bg-gray-100 rounded-[8px] px-2 py-1.5 text-[14px] outline-none">
-                                                        <option value="All">2 ชม.</option><option value={H1}>{H1}</option><option value={H2}>{H2}</option>
-                                                    </select>
-                                                )}
-                                                <select value={r.Payment_Status || 'Unpaid'} onChange={e => patchReg(i, { Payment_Status: e.target.value })}
-                                                    className={`flex-1 rounded-[8px] px-2 py-1.5 text-[14px] outline-none ${r.Payment_Status === 'Paid' ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100'}`}>
-                                                    <option value="Unpaid">ยังไม่จ่าย</option><option value="Paid">จ่ายแล้ว</option>
+                                            {isWorkdayReg && (
+                                                <select value={hoursOf(r)} onChange={e => patchReg(i, { Hours_Joined: e.target.value })}
+                                                    className="w-full mt-2 bg-gray-100 rounded-[8px] px-2 py-1.5 text-[14px] outline-none">
+                                                    <option value="All">2 ชม.</option><option value={H1}>{H1}</option><option value={H2}>{H2}</option>
                                                 </select>
-                                            </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -1064,7 +1073,7 @@
 
             const homeList = useMemo(() => {
                 const list = sessionInfos.filter(({ s, info }) => {
-                    if (info.isPast && (info.isCancelled || TASKS.every(t => isTrue(s[t.key])))) return false;
+                    if (info.isPast && (!isAdminUser || info.isCancelled || TASKS.every(t => isTrue(s[t.key])))) return false;
                     const mine = info.regs.some(r => String(r.User_ID) === myId);
                     if (filterMyStatus === 'Joined' && !mine) return false;
                     if (filterMyStatus === 'NotJoined' && (mine || info.isPast || info.isCancelled)) return false;
@@ -1075,7 +1084,7 @@
                     upcoming: list.filter(x => !x.info.isPast).sort((a, b) => a.info.date - b.info.date),
                     past: list.filter(x => x.info.isPast).sort((a, b) => b.info.date - a.info.date)
                 };
-            }, [sessionInfos, filterMyStatus, filterDay, myId]);
+            }, [sessionInfos, filterMyStatus, filterDay, myId, isAdminUser]);
 
             const selected = useMemo(
                 () => selectedId ? sessionInfos.find(x => String(x.s.Session_ID) === String(selectedId)) || null : null,
@@ -1151,7 +1160,7 @@
                     'วัน': `วัน${TH_DAYS[d.getDay()]} ${d.getDate()}-${d.getMonth() + 1}-${String(d.getFullYear()).slice(-2)}`,
                     'หัวข้อ': head, 'วันที่': fmtLong(d), 'สนาม': s.Location || '', 'เวลา': timeRange(si.isWorkday),
                     'ค่าคอร์ด': c.court, 'ค่าลูก': c.shuttle, 'คนละ': c.perHead, 'หาร': c.splitBy,
-                    'ค่าใช้จ่าย': costStr, 'รายชื่อ': body.replace(/\n+$/, ''), 'ลิงก์': SHORT_LIFF_URL
+                    'ค่าใช้จ่าย': costStr, 'รายชื่อ': body.replace(/\n+$/, ''), 'ลิงก์': LIFF_URL
                 }));
             }, [selected, nameById, rules, appSettings]);
 
@@ -1467,14 +1476,19 @@
                 const s = selectedSession;
                 const si = info;
                 const dim = si.isPast || si.isCancelled;
-                const extraCost = extraShuttles * rules.SHUTTLECOCK_PRICE;
-                const extraPerHead = currentRegs.length > 0 && extraShuttles > 0 ? Math.ceil(extraCost / currentRegs.length) : 0;
-                const collected = si.costs.perHead * currentRegs.length;
-                const diff = collected - si.costs.total;
+                // ตัวอย่างราคาคนละตอนแอดมินกดเพิ่ม/ลดลูก (ก่อนบันทึก)
+                const lc = (() => {
+                    const shuttleCount = rules.SHUTTLES_PER_SESSION + extraShuttles;
+                    const shuttle = rules.SHUTTLECOCK_PRICE * shuttleCount;
+                    const total = si.costs.court + shuttle;
+                    return { ...si.costs, shuttleCount, shuttle, total, perHead: Math.ceil(total / si.costs.splitBy) };
+                })();
+                const collected = lc.perHead * currentRegs.length;
+                const diff = collected - lc.total;
                 const extraChanged = extraShuttles !== (Number(s.Extra_Shuttles) || 0);
 
                 const rulesText = si.isWorkday
-                    ? `ชั่วโมงละไม่เกิน ${si.cap} คน ลงชื่อหรือยกเลิกได้จนถึงวันเล่น`
+                    ? `รับสูงสุด ${si.cap} คน เป้าหมายขั้นต่ำ ${si.min} คน ลงชื่อหรือยกเลิกได้จนถึงวันเล่น`
                     : `ไม่จำกัดจำนวน แต่ต้องมีอย่างน้อย ${si.min} คน ลงชื่อได้ถึง${TH_DAYS[si.lastRegDay.getDay()]}ที่ ${si.lastRegDay.getDate()} ${TH_MONTHS_SHORT[si.lastRegDay.getMonth()]} ถ้าไม่ครบระบบจะงดรอบและแจ้งทาง LINE`;
 
                 const closedReason = si.isPast ? 'รอบนี้จบแล้ว'
@@ -1550,7 +1564,7 @@
                                 ) : (
                                     <>
                                         <Row label="เวลา" value={timeRange(si.isWorkday)} />
-                                        <Row label="ค่าใช้จ่าย" value={`คนละ ${si.costs.perHead} ฿`} />
+                                        <Row label="ค่าใช้จ่าย" value={`คนละ ${lc.perHead} ฿`} />
                                         <button type="button" onClick={handleRegister} disabled={submitting}
                                             className="w-full p-4 text-center font-semibold text-[#007AFF] text-[17px] active:bg-gray-50 disabled:opacity-50">
                                             {submitting ? 'กำลังบันทึก...' : 'ลงชื่อ'}
@@ -1582,36 +1596,28 @@
                                     <SectionTitle>ค่าใช้จ่าย</SectionTitle>
                                     <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mb-8">
                                         <Row label="ค่าคอร์ด" value={`${si.costs.court} ฿`} />
-                                        <Row label={`ลูกแบด ${rules.SHUTTLES_PER_SESSION} ลูก`} value={`${si.costs.shuttle} ฿`} />
-                                        <div className="p-4 flex justify-between items-center border-b border-gray-200">
+                                        <Row label={`ลูกแบด ${lc.shuttleCount} ลูก`} value={`${lc.shuttle} ฿`} />
+                                        <div className={`p-4 flex justify-between items-center ${isAdminUser ? 'border-b border-gray-200' : ''}`}>
                                             <span className="text-[17px] font-semibold text-black">คนละ</span>
-                                            <span className="text-[22px] font-bold text-[#34C759] tabular-nums">{si.costs.perHead} ฿</span>
+                                            <span className="text-[22px] font-bold text-[#34C759] tabular-nums">{lc.perHead} ฿</span>
                                         </div>
 
-                                        <div className={`p-4 flex justify-between items-center ${extraShuttles > 0 ? 'border-b border-gray-200' : ''}`}>
-                                            <div>
-                                                <div className="text-[17px] text-black">ใช้ลูกเพิ่มหลังเล่น</div>
-                                                {extraShuttles > 0 && <div className="text-[13px] text-gray-500">+{extraCost} ฿ หารทุกคนที่มา</div>}
-                                            </div>
-                                            {isAdminUser ? (
+                                        {isAdminUser && (
+                                            <div className="p-4 flex justify-between items-center">
+                                                <div>
+                                                    <div className="text-[17px] text-black">เติมลูกเพิ่มหน้างาน</div>
+                                                    {extraChanged && <div className="text-[13px] text-[#FF9500]">ยังไม่ได้บันทึก</div>}
+                                                </div>
                                                 <div className="flex items-center gap-3 bg-[#E9E9EA] rounded-[10px] p-1">
                                                     <button onClick={() => setExtraShuttles(Math.max(0, extraShuttles - 1))} className="w-8 h-8 rounded-[8px] bg-white shadow-sm text-lg active:opacity-70">-</button>
                                                     <span className="font-semibold text-[17px] w-5 text-center tabular-nums">{extraShuttles}</span>
                                                     <button onClick={() => setExtraShuttles(Math.min(20, extraShuttles + 1))} className="w-8 h-8 rounded-[8px] bg-white shadow-sm text-lg active:opacity-70">+</button>
                                                 </div>
-                                            ) : (
-                                                <span className="text-[17px] text-gray-500">{extraShuttles} ลูก</span>
-                                            )}
-                                        </div>
-                                        {extraShuttles > 0 && (
-                                            <div className="p-4 flex justify-between items-center">
-                                                <span className="text-[17px] text-black">เก็บเพิ่มคนละ</span>
-                                                <span className="text-[17px] font-semibold text-[#FF9500] tabular-nums">{extraPerHead} ฿</span>
                                             </div>
                                         )}
                                         {isAdminUser && currentRegs.length > 0 && (
                                             <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 flex justify-between text-[14px]">
-                                                <span className="text-gray-500">เก็บได้ {currentRegs.length} × {si.costs.perHead}</span>
+                                                <span className="text-gray-500">เก็บได้ {currentRegs.length} × {lc.perHead}</span>
                                                 <span className={diff >= 0 ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}>
                                                     {collected} ฿ ({diff >= 0 ? 'เกิน' : 'ขาด'} {Math.abs(diff)} ฿)
                                                 </span>
