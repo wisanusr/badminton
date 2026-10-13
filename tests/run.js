@@ -15,7 +15,7 @@ function backendFiles() {
   if (fs.existsSync(dir)) {
     return fs.readdirSync(dir).filter(f => f.endsWith('.gs')).sort().map(f => path.join(dir, f));
   }
-  return [path.join(ROOT, 'Code.gs')];
+  throw new Error('backend/ folder not found');
 }
 
 // ---------- fixtures ----------

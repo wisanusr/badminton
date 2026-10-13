@@ -82,7 +82,7 @@
         const LIFF_URL = `https://liff.line.me/${LIFF_ID}`;
         let liffReady = false;
 
-        // ค่าเริ่มต้นของกติกา (ค่าจริงอ่านจากชีท Settings ชุดเดียวกับ Code.gs)
+        // ค่าเริ่มต้นของกติกา (ค่าจริงอ่านจากชีท Settings ชุดเดียวกับ backend/Rules.gs)
         const DEFAULT_RULES = {
             WORKDAY_HOUR_CAP: 8,
             WEEKEND_CLOSE_DAYS: 2,
@@ -127,7 +127,7 @@
         const DEFAULT_LINE_TEMPLATE = "{วัน}\n{สนาม}\n\n{รายชื่อ}\n\n🏸🏸🏸🏸🏸\nลงชื่อตีแบด {ลิงก์}";
         const renderLineTemplate = (tpl, vars) =>
             String(tpl || DEFAULT_LINE_TEMPLATE).replace(/\{([^{}\n]+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
-        // ช่วงค่าที่ยอมรับ (ตรงกับ SETTING_LIMITS ใน Code.gs) ค่านอกช่วงใช้ค่าเริ่มต้น กันหารศูนย์
+        // ช่วงค่าที่ยอมรับ (ตรงกับ SETTING_LIMITS ใน backend/Rules.gs) ค่านอกช่วงใช้ค่าเริ่มต้น กันหารศูนย์
         const RULE_LIMITS = {
             WORKDAY_HOUR_CAP: [1, 50], WEEKEND_CLOSE_DAYS: [0, 14], WORKDAY_MIN_PLAYERS: [0, 50], WEEKEND_MIN_PLAYERS: [0, 50],
             COST_SPLIT_BASE: [1, 50], SHUTTLES_PER_SESSION: [0, 20], SHUTTLECOCK_PRICE: [0, 1000], BOOK_NOTICE_DAYS: [0, 14]
