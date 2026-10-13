@@ -1155,8 +1155,9 @@
                     if (decoded && decoded.exp && decoded.exp - Math.floor(Date.now() / 1000) < 30) throw askRelogin();
                 }
                 const idToken = liffReady && liff.isLoggedIn() ? liff.getIDToken() : null;
-                // action อ่านอย่างเดียว retry ได้ปลอดภัย (Apps Script cold start มักช้า/พลาดครั้งแรก)
-                const maxTries = (action === 'me' || action === 'getAllData') ? 2 : 1;
+                // action อ่านอย่างเดียว retry ได้ปลอดภัย (Apps Script cold start / เพิ่ง deploy มักพลาดครั้งแรก ครั้งถัดไปติด)
+                // ลองสูงสุด 3 ครั้ง เว้นช่วงห่างขึ้นเรื่อยๆ เพื่อไม่ให้ผู้ใช้เจอ "เข้าสู่ระบบไม่สำเร็จ" ตอนกดครั้งแรก
+                const maxTries = isRead ? 3 : 1;
                 for (let attempt = 1; ; attempt++) {
                     const controller = new AbortController();
                     const timer = setTimeout(() => controller.abort(), 25000);
@@ -1168,14 +1169,14 @@
                             body: JSON.stringify({ action, payload, idToken }),
                             signal: controller.signal
                         });
-                        const result = await res.json();
+                        const result = await res.json().catch(() => { throw new Error('เซิร์ฟเวอร์ตอบกลับผิดรูปแบบ (HTTP ' + res.status + ')'); });
                         apiDebug(action, payload, result, Date.now() - startedAt);
                         if (result.code === 'AUTH_EXPIRED') throw askRelogin(action === 'me'); // ตอนเปิดแอป (me) เข้าสู่ระบบใหม่เองทันที
                         return result;
                     } catch (e) {
                         if (e.isAuth) throw e;
                         apiDebug(action, payload, { status: 'exception', message: e.message }, Date.now() - startedAt);
-                        if (attempt < maxTries) continue;
+                        if (attempt < maxTries) { await new Promise(r => setTimeout(r, 800 * attempt)); continue; }
                         if (e.name === 'AbortError') throw new Error("การเชื่อมต่อใช้เวลานานเกินไป กรุณาลองใหม่");
                         throw e;
                     } finally {
