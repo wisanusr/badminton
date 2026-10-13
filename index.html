@@ -127,13 +127,32 @@
         const DEFAULT_LINE_TEMPLATE = "{วัน}\n{สนาม}\n\n{รายชื่อ}\n\n🏸🏸🏸🏸🏸\nลงชื่อตีแบด {ลิงก์}";
         const renderLineTemplate = (tpl, vars) =>
             String(tpl || DEFAULT_LINE_TEMPLATE).replace(/\{([^{}\n]+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+        // ช่วงค่าที่ยอมรับ (ตรงกับ SETTING_LIMITS ใน Code.gs) ค่านอกช่วงใช้ค่าเริ่มต้น กันหารศูนย์
+        const RULE_LIMITS = {
+            WORKDAY_HOUR_CAP: [1, 50], WEEKEND_CLOSE_DAYS: [0, 14], WORKDAY_MIN_PLAYERS: [0, 50], WEEKEND_MIN_PLAYERS: [0, 50],
+            COST_SPLIT_BASE: [1, 50], SHUTTLES_PER_SESSION: [0, 20], SHUTTLECOCK_PRICE: [0, 1000], BOOK_NOTICE_DAYS: [0, 14]
+        };
         const readRules = (settings = {}) => {
             const r = { ...DEFAULT_RULES };
             Object.keys(r).forEach(k => {
                 const raw = settings[k];
-                if (raw !== undefined && raw !== "" && !isNaN(Number(raw))) r[k] = Number(raw);
+                if (raw === undefined || raw === "" || isNaN(Number(raw))) return;
+                const n = Number(raw), lim = RULE_LIMITS[k];
+                if (!lim || (n >= lim[0] && n <= lim[1])) r[k] = n;
             });
             return r;
+        };
+        // ส่วนต่างของรายชื่อ (base = ตอนเปิดหน้าแก้ไข, next = หลังแก้) ส่งเฉพาะที่เปลี่ยน ไม่ทับคนที่ลง/ยกเลิกระหว่างนั้น
+        const diffRegs = (base, next) => {
+            const baseMap = {}; base.forEach(r => { baseMap[String(r.User_ID)] = hoursOf(r); });
+            const nextIds = {}; next.forEach(r => { nextIds[String(r.User_ID)] = true; });
+            return {
+                add: next.filter(r => baseMap[String(r.User_ID)] === undefined)
+                    .map(r => ({ User_ID: String(r.User_ID), DisplayName: r.DisplayName, Hours_Joined: hoursOf(r), Payment_Status: r.Payment_Status, Timestamp: r.Timestamp })),
+                remove: base.filter(r => !nextIds[String(r.User_ID)]).map(r => String(r.User_ID)),
+                update: next.filter(r => baseMap[String(r.User_ID)] !== undefined && baseMap[String(r.User_ID)] !== hoursOf(r))
+                    .map(r => ({ User_ID: String(r.User_ID), Hours_Joined: hoursOf(r) }))
+            };
         };
         const isTrue = v => v === true || v === "TRUE" || v === "true" || v === "Y";
         const hoursOf = r => String(r.Hours_Joined || "All");
@@ -636,6 +655,7 @@
             // ---------- Registrations ----------
             const [regSession, setRegSession] = useState('');
             const [regRows, setRegRows] = useState([]);
+            const [regBase, setRegBase] = useState([]);   // snapshot ตอนเลือกรอบ ใช้คำนวณส่วนต่างตอนบันทึก
             const [regAdd, setRegAdd] = useState('');
             const regSessionObj = sessions.find(s => String(s.Session_ID) === String(regSession));
             const isWorkdayReg = !!regSessionObj && regSessionObj.Type === 'Workday';
@@ -645,17 +665,28 @@
                 const next = [...sessionList].reverse().find(s => parseSessionDate(s.Date) >= today) || sessionList[0];
                 setRegSession(String(next.Session_ID));
             }, [tab, sessions]);
-            useEffect(() => {
-                setRegRows(registrations.filter(r => String(r.Session_ID) === String(regSession)).map(r => ({ ...r })));
+            // โหลดรายชื่อใหม่เมื่อเปลี่ยนรอบ หรือหลังบันทึกเสร็จ ไม่ทับสิ่งที่แอดมินแก้ค้างไว้ตอนข้อมูลรีเฟรชเอง
+            const loadRegs = () => {
+                const rows = registrations.filter(r => String(r.Session_ID) === String(regSession)).map(r => ({ ...r }));
+                setRegRows(rows);
+                setRegBase(rows);
                 setRegAdd('');
-            }, [regSession, registrations]);
+            };
+            const [reloadTick, setReloadTick] = useState(0);
+            useEffect(() => { loadRegs(); }, [regSession, reloadTick]);
             const addReg = () => {
                 if (!regAdd) return;
                 if (regRows.some(r => String(r.User_ID) === regAdd)) return showToast('มีชื่อนี้ในรอบแล้ว', 'error');
                 setRegRows([...regRows, { User_ID: regAdd, Hours_Joined: 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() }]);
                 setRegAdd('');
             };
-            const saveRegs = () => call('adminUpdateRegistrations', { session_id: regSession, registrations: regRows }, 'บันทึกรายชื่อแล้ว');
+            const saveRegs = async () => {
+                const d = diffRegs(regBase, regRows);
+                if (!d.add.length && !d.remove.length && !d.update.length) return showToast('ไม่มีการเปลี่ยนแปลง');
+                // call() รอ onChanged() ดึงข้อมูลใหม่เสร็จก่อนคืนค่า แล้วค่อยตั้ง snapshot ใหม่จากข้อมูลล่าสุด
+                const ok = await call('adminUpdateRegistrations', { session_id: regSession, ...d }, 'บันทึกรายชื่อแล้ว');
+                if (ok) setReloadTick(t => t + 1);
+            };
             const patchReg = (i, patch) => setRegRows(regRows.map((x, j) => j === i ? { ...x, ...patch } : x));
 
             // ---------- Settings ----------
@@ -848,6 +879,7 @@
                                                     ) : !wide && (
                                                         <div className="flex items-center gap-1.5 shrink-0">
                                                             <input type="number" inputMode="numeric" value={val} onChange={e => edit(e.target.value)}
+                                                                min={(RULE_LIMITS[r.Key] || [])[0]} max={(RULE_LIMITS[r.Key] || [])[1]}
                                                                 className="w-[72px] bg-gray-100 rounded-[10px] px-3 py-2 text-[16px] text-black text-right outline-none tabular-nums" />
                                                             {meta.unit && <span className="text-[14px] text-gray-500 w-8">{meta.unit}</span>}
                                                         </div>
@@ -938,6 +970,7 @@
             const [showAdminPage, setShowAdminPage] = useState(false);
             const [showAdminManager, setShowAdminManager] = useState(false);
             const [amData, setAmData] = useState([]);
+            const [amBase, setAmBase] = useState([]);   // snapshot ตอนเปิดหน้าแก้ไข
             const [amExistingId, setAmExistingId] = useState("");
             const [amNewName, setAmNewName] = useState("");
             const [amNewHours, setAmNewHours] = useState("All");
@@ -951,7 +984,23 @@
             };
 
             // ---------- API ----------
+            // ID token ของ LINE มีอายุ ~1 ชม. ถ้าหมดอายุไม่รีโหลดกลางงานเอง ให้ผู้ใช้เลือกว่าจะเข้าสู่ระบบใหม่ตอนไหน
+            const askRelogin = (auto) => {
+                if (auto || window.confirm('เซสชัน LINE หมดอายุ ต้องเข้าสู่ระบบใหม่\n(สิ่งที่ยังไม่ได้บันทึกจะหาย) เข้าสู่ระบบตอนนี้เลยไหม?')) {
+                    liff.logout();
+                    liff.login({ redirectUri: window.location.href });
+                }
+                const err = new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+                err.isAuth = true;
+                return err;
+            };
+
             const sendApiRequest = async (action, payload = null) => {
+                const isRead = action === 'me' || action === 'getAllData';
+                if (!isRead && liffReady) {
+                    const decoded = liff.getDecodedIDToken && liff.getDecodedIDToken();
+                    if (decoded && decoded.exp && decoded.exp - Math.floor(Date.now() / 1000) < 30) throw askRelogin();
+                }
                 const idToken = liffReady && liff.isLoggedIn() ? liff.getIDToken() : null;
                 // action อ่านอย่างเดียว retry ได้ปลอดภัย (Apps Script cold start มักช้า/พลาดครั้งแรก)
                 const maxTries = (action === 'me' || action === 'getAllData') ? 2 : 1;
@@ -966,13 +1015,10 @@
                             signal: controller.signal
                         });
                         const result = await res.json();
-                        if (result.code === 'AUTH_EXPIRED') {
-                            liff.logout();
-                            window.location.reload();
-                            return new Promise(() => {});
-                        }
+                        if (result.code === 'AUTH_EXPIRED') throw askRelogin(action === 'me'); // ตอนเปิดแอป (me) เข้าสู่ระบบใหม่เองทันที
                         return result;
                     } catch (e) {
+                        if (e.isAuth) throw e;
                         if (attempt < maxTries) continue;
                         if (e.name === 'AbortError') throw new Error("การเชื่อมต่อใช้เวลานานเกินไป กรุณาลองใหม่");
                         throw e;
@@ -1267,10 +1313,9 @@
             };
 
             // ---------- admin manager ----------
-            const pickForCompare = list => JSON.stringify(list.map(r => [String(r.User_ID), hoursOf(r)]));
-
             const openAdminManager = () => {
                 setAmData(currentRegs.map(r => ({ ...r })));
+                setAmBase(currentRegs.map(r => ({ ...r })));
                 setAmExistingId("");
                 setAmNewName("");
                 setAmNewHours("All");
@@ -1305,19 +1350,17 @@
                 if (pending && !data.some(r => String(r.User_ID) === pending.User_ID)) data.push(pending);
 
                 const statusChanged = amWillCancel !== info.isCancelled;
-                const playersChanged = pickForCompare(data) !== pickForCompare(currentRegs);
+                const d = diffRegs(amBase, data);
+                const playersChanged = d.add.length + d.remove.length + d.update.length > 0;
                 if (!statusChanged && !playersChanged) { setShowAdminManager(false); return; }
 
                 setSubmitting(true);
                 try {
-                    if (statusChanged) {
-                        const r = await sendApiRequest(amWillCancel ? 'cancelSession' : 'openSession', { session_id: selectedSession.Session_ID });
-                        if (r.status !== 'success') throw new Error(r.message);
-                    }
-                    if (playersChanged) {
-                        const r = await sendApiRequest('adminUpdateRegistrations', { session_id: selectedSession.Session_ID, registrations: data });
-                        if (r.status !== 'success') throw new Error(r.message);
-                    }
+                    // ส่งครั้งเดียว: สถานะรอบ + ส่วนต่างรายชื่อ ทำใน lock เดียวฝั่ง server (ไม่ค้างครึ่งทาง ไม่ทับคนอื่น)
+                    const payload = { session_id: selectedSession.Session_ID, ...d };
+                    if (statusChanged) payload.session_status = amWillCancel ? 'Cancelled' : 'Open';
+                    const r = await sendApiRequest('adminUpdateRegistrations', payload);
+                    if (r.status !== 'success') throw new Error(r.message);
                     showToast('บันทึกแล้ว');
                     setShowAdminManager(false);
                     await fetchAllData();
@@ -1344,7 +1387,8 @@
                 );
             }
 
-            if (authLoading || (publicViewMode && loading)) {
+            // ผู้ใช้ใหม่ (ยังไม่มีโปรไฟล์) ต้องรอรายชื่อสมาชิกโหลดก่อน ไม่งั้นรายชื่อ "เลือกชื่อเดิม" จะว่างแล้วสร้างโปรไฟล์ซ้ำ
+            if (authLoading || (publicViewMode && loading) || (!publicViewMode && !currentUser && loading)) {
                 return (
                     <div className="min-h-screen flex flex-col items-center justify-center gap-4">
                         <span className="text-5xl">🏸</span>
