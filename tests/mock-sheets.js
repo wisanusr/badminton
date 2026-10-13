@@ -31,6 +31,7 @@ function mkSheet(rows) {
           for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) s.rows[r - 1 + i][c - 1 + j] = '';
           return this;
         },
+        getFormula() { return (s.formulas && s.formulas[`${r},${c}`]) || ''; },
         setFontWeight() { return this; },
         setBackground() { return this; }
       };

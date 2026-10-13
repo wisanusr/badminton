@@ -195,6 +195,10 @@ function adminSaveSession(ss, payload) {
   const type = payload.type !== undefined && String(payload.type).trim() !== "" ? String(payload.type).trim() : sessionTypeForDate(date);
   if (SESSION_TYPES.indexOf(type) === -1) fail("BAD_INPUT", "ประเภทรอบไม่ถูกต้อง");
   const sheet = ss.getSheetByName("Sessions");
+  const formulaCols = formulaDrivenColumns(sheet, ["Type", "Location", "Cost"]);
+  if (formulaCols.length) {
+    fail("FORMULA_COLUMN", `คอลัมน์ ${formulaCols.join(", ")} ในชีท Sessions เป็นสูตร ระบบจึงไม่บันทึกให้ (เขียนทับสูตรแล้วทั้งคอลัมน์จะว่างเป็น #REF!) แปลงเป็นค่าธรรมดาก่อน (คัดลอก แล้ววางเฉพาะค่า) หรือเพิ่ม/แก้รอบในชีทโดยตรง`);
+  }
   const sid = String(payload.session_id || "").trim();
   if (sid) {
     const session = findSession(ss, sid);
