@@ -159,7 +159,7 @@ function pruneSentMarkers() {
   const all = props.getProperties();
   const cutoff = Date.now() - 7 * 86400000;
   Object.keys(all).forEach(k => {
-    if (!/^(book|post)_/.test(k)) return;
+    if (!/^(book|post|point)_/.test(k)) return;
     const t = Number(all[k]);
     if (!t || t < cutoff) props.deleteProperty(k); // ค่า "1" แบบเก่าไม่มีเวลา ถือว่าเก่า
   });
@@ -247,6 +247,39 @@ function testDailyNotify() {
   const post = buildPostText(ss, { date: next.Date, type: String(next.Type).trim(), location: String(next.Location).trim(), cost: next.Cost, extra: next.Extra_Shuttles }, regs, nameById, rules);
   const res = pushToLine(ids, ["🧪 ทดสอบ: ข้อความโพสต์ของรอบ " + sid, post]);
   if (res.code !== 200) throw new Error("ส่งไม่สำเร็จ: " + res.code + " " + res.body);
+}
+
+// ทริกเกอร์ทุกวัน 21:00: วันเล่น → ส่งข้อความให้ผู้เล่นที่ลงชื่อ (ผูก LINE แล้ว) ไปสแกนเก็บแต้มบัตรสะสมแต้มของ LINE OA
+// ลิงก์เป็นของแต่ละรอบ (คอลัมน์ Point_URL ในชีท Sessions ที่แอดมินวางในหน้ารอบ) รอบที่ไม่มีลิงก์ = ไม่ส่ง
+// ผู้เล่นสแกนเอง ระบบไม่รู้ว่าใครสแกนแล้ว
+function pointReminderNotify() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureSheetsExist(ss);
+  pruneSentMarkers();
+
+  const todayKey = Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyyMMdd");
+  const lineById = {};
+  getSheetDataAsJSON(ss.getSheetByName("Users")).forEach(u => { lineById[String(u.User_ID).trim()] = String(u.Line_UID || "").trim(); });
+  const allRegs = getSheetDataAsJSON(ss.getSheetByName("Registrations"));
+
+  getSheetDataAsJSON(ss.getSheetByName("Sessions")).forEach(row => {
+    if (!row.Session_ID || String(row.Status).trim() === "Cancelled") return;
+    const date = toSessionDate(row.Date);
+    const pointUrl = String(row.Point_URL || "").trim();
+    if (!pointUrl || !date || daysUntil(date) !== 0) return;
+    const sid = String(row.Session_ID).trim();
+    const key = `point_${sid}_${todayKey}`;
+    if (wasSent(key)) return;
+
+    const lineIds = allRegs
+      .filter(r => String(r.Session_ID).trim() === sid)
+      .map(r => lineById[String(r.User_ID).trim()])
+      .filter((id, i, a) => id && a.indexOf(id) === i);
+    if (!lineIds.length) return;
+
+    const res = pushToLine(lineIds, `🏸 ขอบคุณที่มาตีวันนี้ (${formatThaiDate(date)})\nอย่าลืมสแกนเก็บแต้มสะสมนะครับ 🎁\n${pointUrl}`);
+    if (res.code === 200) markSent(key);
+  });
 }
 
 // รอบวันหยุดที่ปิดรับแล้ว: ถ้าคนไม่ถึงขั้นต่ำ → งดรอบ + แจ้งผู้เล่นทุกคน + แจ้งแอดมิน

@@ -965,6 +965,7 @@
             const [showCancelConfirm, setShowCancelConfirm] = useState(false);
             const [selectedHour, setSelectedHour] = useState("All");
             const [extraShuttles, setExtraShuttles] = useState(0);
+            const [pointUrl, setPointUrl] = useState('');
             const [pendingTasks, setPendingTasks] = useState({});
             const [lineText, setLineText] = useState("");
             const [copied, setCopied] = useState(false);
@@ -1193,6 +1194,7 @@
             useEffect(() => {
                 setPendingTasks({});
                 setIsEditing(false);
+                setPointUrl('');
             }, [selectedId]);
 
             useEffect(() => {
@@ -1281,6 +1283,14 @@
             const handleSaveExtraShuttles = () => runAction('updateTask', {
                 session_id: selectedSession.Session_ID, task_key: 'Extra_Shuttles', task_value: extraShuttles
             }, 'บันทึกจำนวนลูกแล้ว');
+
+            const handleSavePointUrl = async () => {
+                const url = pointUrl.trim();
+                if (url && !/^https:\/\/\S+$/.test(url)) return showToast('ลิงก์ต้องขึ้นต้นด้วย https://', 'error');
+                const ok = await runAction('updateTask', { session_id: selectedSession.Session_ID, task_key: 'Point_URL', task_value: url },
+                    url ? 'บันทึกลิงก์แล้ว จะส่งให้ผู้เล่น 21:00' : 'ล้างลิงก์แล้ว');
+                if (ok) setPointUrl('');
+            };
 
             const handleTaskToggleLocal = (key) => {
                 setPendingTasks(prev => {
@@ -1703,6 +1713,27 @@
                                         </div>
                                     )}
                                 </>
+                            )}
+
+                            {/* ลิงก์สแกนเก็บแต้ม: ส่งให้ผู้เล่นที่ลงชื่อ 21:00 วันเล่น */}
+                            {isAdminUser && !si.isCancelled && (
+                                <div className="mb-8">
+                                    <SectionTitle>ลิงก์สแกนเก็บแต้ม</SectionTitle>
+                                    <div className="bg-white rounded-[20px] overflow-hidden shadow-sm p-4">
+                                        <div className="text-[13px] text-gray-500 mb-2">
+                                            {s.Has_Point_URL ? '✅ ตั้งลิงก์แล้ว จะส่งให้ผู้ลงชื่อ 21:00 วันเล่น' : 'ยังไม่ได้ตั้ง (ไม่ตั้ง = ไม่ส่งข้อความ)'}
+                                        </div>
+                                        <input type="url" inputMode="url" value={pointUrl} onChange={e => setPointUrl(e.target.value)}
+                                            placeholder={s.Has_Point_URL ? 'วางลิงก์ใหม่เพื่อแทนที่ (ว่าง = ล้าง)' : 'วางลิงก์ https://...'}
+                                            className={FIELD} />
+                                        {(pointUrl.trim() !== '' || s.Has_Point_URL) && (
+                                            <button onClick={handleSavePointUrl} disabled={submitting}
+                                                className="mt-3 w-full bg-[#007AFF] text-white font-semibold py-3 rounded-[14px] active:opacity-80 disabled:opacity-50">
+                                                {pointUrl.trim() === '' ? 'ล้างลิงก์' : 'บันทึกลิงก์'}
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
                             )}
 
                             {/* Admin checklist */}

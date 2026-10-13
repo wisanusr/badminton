@@ -38,7 +38,7 @@ function fixture() {
     Users: mkSheet([['User_ID', 'DisplayName', 'Skill_Level', 'Profile_Pic', 'Join_Date', 'Line_UID'],
       ['U1', 'Alice', 'C', '', '', 'Ua'], ['U2', 'Bob', 'C', '', '', 'Ub'],
       ['U3', 'Carol', 'C', '', '', ''], ['U4', 'Admin', 'C', '', '', 'Uadmin']]),
-    Sessions: mkSheet([['Session_ID', 'Date', 'Type', 'Location', 'Status', 'Cost', 'Calculated_Price_Per_Head', 'Task1', 'Task2', 'Task3', 'Task4', 'Task5'],
+    Sessions: mkSheet([['Session_ID', 'Date', 'Type', 'Location', 'Status', 'Cost', 'Calculated_Price_Per_Head', 'Task1', 'Task2', 'Task3', 'Task4', 'Task5', 'Point_URL'],
       ['S1', inDays(1), 'Workday', 'Court A', 'Open', 200],   // workday tomorrow, 18-19 already full (8)
       ['S2', inDays(1), 'Weekend', 'Court B', 'Open', 240],   // weekend tomorrow -> registration closed (<2 days)
       ['S3', inDays(10), 'Weekend', 'Court B', 'Open', 240],  // weekend in 10 days -> open
@@ -329,6 +329,54 @@ test('notifications: sent markers older than 7 days are pruned', ({ G, world }) 
   G('pruneSentMarkers')();
   assert(!world.props.has('post_S1_old') && !world.props.has('book_S9_legacy'));
   assert(world.props.has('post_S1_new') && world.props.has('LINE_MESSAGING_TOKEN'));
+});
+
+test('updateTask: Point_URL accepts https or empty, rejects anything else', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const col = sheets.Sessions.rows[0].indexOf('Point_URL');
+  h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: ' https://lin.ee/abc ' }, 'tokAdmin');
+  assert.strictEqual(sheets.Sessions.rows[3][col], 'https://lin.ee/abc');
+  expectCode(() => h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: 'javascript:alert(1)' }, 'tokAdmin'), 'BAD_INPUT');
+  expectCode(() => h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: '=HYPERLINK("x")' }, 'tokAdmin'), 'BAD_INPUT');
+  h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: '' }, 'tokAdmin');
+  assert.strictEqual(sheets.Sessions.rows[3][col], '');
+  expectCode(() => h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: 'https://x.y' }, 'tokA'), 'FORBIDDEN');
+});
+
+test('getAllData: Point_URL is never sent, only Has_Point_URL', ({ G, sheets }) => {
+  const col = sheets.Sessions.rows[0].indexOf('Point_URL');
+  sheets.Sessions.rows[3][col] = 'https://lin.ee/secret';
+  G('clearDataCache')();
+  const d = G('handleRequest')('getAllData', {}, null).data;
+  const s3 = d.sessions.find(s => s.Session_ID === 'S3');
+  assert.strictEqual(s3.Has_Point_URL, true);
+  assert(!('Point_URL' in s3) && !JSON.stringify(d).includes('lin.ee/secret'));
+  assert.strictEqual(d.sessions.find(s => s.Session_ID === 'S2').Has_Point_URL, false);
+});
+
+test('pointReminderNotify: only today sessions with a link, linked players once, retried until LINE accepts', ({ G, world, sheets }) => {
+  const sent = [];
+  let status = 500;
+  world.globals.UrlFetchApp.fetch = (url, opts) => {
+    sent.push(JSON.parse(opts.payload));
+    return { getResponseCode: () => status, getContentText: () => '{}' };
+  };
+  world.props.set('LINE_MESSAGING_TOKEN', 't');
+  const link = 'https://lin.ee/pt';
+  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200, '', '', '', '', '', '', link]);   // today + link
+  sheets.Sessions.rows.push(['T2', inDays(0), 'Workday', 'B', 'Open', 200, '', '', '', '', '', '', '']);     // today, no link
+  sheets.Sessions.rows.push(['T3', inDays(1), 'Workday', 'C', 'Open', 200, '', '', '', '', '', '', link]);   // tomorrow
+  sheets.Sessions.rows.push(['T4', inDays(0), 'Workday', 'D', 'Cancelled', 200, '', '', '', '', '', '', link]); // cancelled
+  ['T1', 'T2', 'T3', 'T4'].forEach(sid => ['U1', 'U3', 'U2'].forEach(u => sheets.Registrations.appendRow([1, sid, u, 'All', false, 'Unpaid'])));
+  G('pointReminderNotify')();
+  assert.strictEqual(sent.length, 1, 'one multicast for T1 only');
+  assert.deepStrictEqual(sent[0].to.sort(), ['Ua', 'Ub'], 'U3 has no LINE id');
+  assert(sent[0].messages[0].text.includes(link));
+  status = 200;
+  G('pointReminderNotify')();   // first send failed -> retried
+  assert.strictEqual(sent.length, 2);
+  G('pointReminderNotify')();   // now marked -> not sent again
+  assert.strictEqual(sent.length, 2);
 });
 
 // ---------- runner ----------

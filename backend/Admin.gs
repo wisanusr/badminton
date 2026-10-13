@@ -1,6 +1,9 @@
 // Admin actions: session status, checklist tasks, registration edits, and sheet management (settings, sessions, users).
 
-const TASK_KEY_PATTERN = /^(Task\d+|Extra_Shuttles)$/;
+const TASK_KEY_PATTERN = /^(Task\d+|Extra_Shuttles|Point_URL)$/;
+
+// ลิงก์สแกนเก็บแต้มของรอบ: ว่าง (ล้างค่า) หรือ https:// เท่านั้น กันค่าอื่นหลุดเข้าไปในข้อความที่ส่งให้ผู้เล่น
+const POINT_URL_PATTERN = /^https:\/\/[^\s]{1,480}$/;
 
 function setSessionStatus(ss, sessionId, status, okMessage) {
   const session = findSession(ss, sessionId);
@@ -17,6 +20,10 @@ function updateTask(ss, payload) {
   Object.keys(tasks).forEach(k => {
     if (!TASK_KEY_PATTERN.test(k)) fail("BAD_INPUT", "ไม่อนุญาตให้แก้คอลัมน์ " + k);
   });
+  if (tasks.Point_URL !== undefined) {
+    tasks.Point_URL = String(tasks.Point_URL).trim();
+    if (tasks.Point_URL !== "" && !POINT_URL_PATTERN.test(tasks.Point_URL)) fail("BAD_INPUT", "ลิงก์ต้องขึ้นต้นด้วย https://");
+  }
 
   const sheet = session.sheet;
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
