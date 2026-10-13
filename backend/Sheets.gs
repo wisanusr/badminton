@@ -2,7 +2,7 @@
 
 const HIDDEN_SETTINGS = ["ADMIN_PASS", "ADMIN_LINE_IDS"];
 
-const ALL_DATA_CACHE_KEY = "all_data_v1";
+const ALL_DATA_CACHE_KEY = "all_data_v2"; // เปลี่ยนเลขเมื่อโครงสร้าง payload เปลี่ยน (v2 เพิ่ม rules, limits)
 
 const ALL_DATA_TTL = 30; // วินาที (แก้ชีทด้วยมือจะเห็นผลภายในเวลานี้)
 
@@ -30,12 +30,14 @@ function getAllData(ss) {
     return rest;
   });
 
+  const settingRows = getSheetDataAsJSON(ss.getSheetByName("Settings"));
   const settings = {};
-  getSheetDataAsJSON(ss.getSheetByName("Settings")).forEach(s => {
+  settingRows.forEach(s => {
     if (s.Key && HIDDEN_SETTINGS.indexOf(s.Key) === -1) settings[s.Key] = s.Value;
   });
 
-  return { sessions, users, registrations, settings };
+  // rules = กติกาที่ตรวจช่วงแล้ว (ตัวเดียวกับที่ server ใช้), limits = ช่วงที่ยอมรับ (ใช้กับช่องกรอกในหน้าตั้งค่า)
+  return { sessions, users, registrations, settings, rules: rulesFromSettings(settingRows), limits: SETTING_LIMITS };
 }
 
 let _settingsMap = null; // อ่านชีท Settings ครั้งเดียวต่อการรัน (เดิมอ่านทั้งชีททุกครั้งที่เรียก getSetting)

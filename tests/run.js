@@ -130,6 +130,21 @@ test('getAllData: cached, and invalidated by a write', ({ G, sheets }) => {
   assert.strictEqual(h('getAllData', {}, null).data.registrations.length, before + 2);
 });
 
+test('getAllData: sends validated rules and limits (single source for the web page)', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  sheets.Settings.rows.find(r => r[0] === 'COST_SPLIT_BASE')[1] = 8;
+  let d = h('getAllData', {}, null).data;
+  assert.strictEqual(d.rules.COST_SPLIT_BASE, 8);
+  assert.strictEqual(d.rules.WORKDAY_HOUR_CAP, 8, 'default when the key is absent from the sheet rows');
+  assert.deepStrictEqual(Object.keys(d.limits).sort(), Object.keys(G('SETTING_LIMITS')).sort());
+  assert.deepStrictEqual(d.rules, G('getRules')(G('SpreadsheetApp').getActiveSpreadsheet()), 'same as what the server uses');
+  // an out-of-range value typed straight into the sheet is not forwarded to the page
+  G('CacheService').getScriptCache().remove(G('ALL_DATA_CACHE_KEY'));
+  sheets.Settings.rows.find(r => r[0] === 'COST_SPLIT_BASE')[1] = 0;
+  d = h('getAllData', {}, null).data;
+  assert.strictEqual(d.rules.COST_SPLIT_BASE, 6);
+});
+
 test('adminUpdateRegistrations: delta keeps other people, no duplicates', ({ G, sheets }) => {
   const h = G('handleRequest');
   h('register', { session_id: 'S3' }, 'tokB'); // someone registers meanwhile
