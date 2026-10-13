@@ -11,8 +11,25 @@ LINE (LIFF)  ──►  index.html (GitHub Pages)  ──fetch POST──►  Ap
 | ส่วน | ไฟล์ | ทำอะไร |
 |---|---|---|
 | หน้าเว็บ | [`index.html`](index.html) | React (โหลดจาก CDN) + Tailwind ไฟล์เดียว ไม่ต้อง build |
-| Backend | [`Code.gs`](Code.gs) | Apps Script: API, ตรวจ LINE ID token, กติกา, แจ้งเตือน, trigger |
+| Backend | [`backend/`](backend) | Apps Script แยกตามหมวด (ดูตารางด้านล่าง) |
 | ทดสอบ | [`tests/`](tests) | ทดสอบ backend ด้วย mock ของชีท (ไม่ต้องใช้บัญชี Google) |
+
+### ไฟล์ใน `backend/`
+
+Apps Script รวมทุกไฟล์ `.gs` ไว้ใน global เดียวกัน ไฟล์ที่แยกไว้เพื่อให้หาโค้ดง่ายเท่านั้น ไม่ต้อง import
+
+| ไฟล์ | หน้าที่ |
+|---|---|
+| `Main.gs` | `doGet`/`doPost`, `handleRequest` (router), `dispatchWrite` |
+| `Auth.gs` | ตรวจ LINE ID token, เช็คสิทธิ์แอดมิน/ผู้ใช้ |
+| `Users.gs` | ผู้ใช้: หาจาก LINE uid, สร้าง/ผูกโปรไฟล์, `getMe` |
+| `Rules.gs` | กติกา (Settings + ช่วงค่าที่ยอมรับ), ช่วงชั่วโมง, ฟังก์ชันวันที่ |
+| `Registrations.gs` | ลงชื่อ / ยกเลิก |
+| `Admin.gs` | จัดการรอบ, เช็คลิสต์, แก้รายชื่อ, ตั้งค่า, สมาชิก |
+| `Notify.gs` | ส่งข้อความ LINE, ข้อความโพสต์กลุ่ม, เช็คจำนวนคนรอบวันหยุด, ตัวจัดการ trigger |
+| `Sheets.gs` | อ่าน/เขียนชีท, `getAllData` (มี cache) |
+| `Setup.gs` | ติดตั้งครั้งแรก: สร้างชีท/คอลัมน์/ค่าตั้งต้น, `setupTriggers` |
+| `appsscript.json` | manifest (เขตเวลา Asia/Bangkok, V8, Web app: Execute as Me / Anyone) |
 
 ## กติกาของก๊วน (ค่าจริงอ่านจากชีท Settings)
 
@@ -22,7 +39,7 @@ LINE (LIFF)  ──►  index.html (GitHub Pages)  ──fetch POST──►  Ap
 
 ## ติดตั้งครั้งแรก
 
-1. สร้าง Google Sheet ใหม่ → Extensions → Apps Script วางโค้ดจาก `Code.gs`
+1. สร้าง Google Sheet ใหม่ → Extensions → Apps Script แล้วนำโค้ดจาก `backend/` เข้าไป (วิธีดูหัวข้อ "นำโค้ดเข้า Apps Script" ด้านล่าง)
 2. รัน `initialSetup` หนึ่งครั้งจาก editor (สร้างชีท `Settings`, `Users`, `Sessions`, `Registrations` และคีย์ตั้งต้น รันซ้ำได้ ไม่ทับข้อมูล)
 3. ในชีท **Settings** ใส่ค่า:
    - `LINE_CHANNEL_ID` — Channel ID ของ LINE Login channel (ใช้ตรวจ ID token)
@@ -32,17 +49,34 @@ LINE (LIFF)  ──►  index.html (GitHub Pages)  ──fetch POST──►  Ap
 5. รัน `setupTriggers` หนึ่งครั้ง (ตั้งเวลา 08:00 เช็คจำนวนคนรอบวันหยุด, 10:00 ส่งข้อความโพสต์วันเล่น, 12:00 แจ้งจองคอร์ด)
 6. Deploy → New deployment → **Web app**: Execute as *Me*, Who has access *Anyone* แล้วคัดลอก URL ที่ลงท้าย `/exec`
 7. ใน `index.html` แก้ค่าด้านบน: `GAS_URL` (URL ข้อ 6), `LIFF_ID`, `POINT_URL`
-   และใน `Code.gs` แก้ `LIFF_URL` ให้ตรงกับ LIFF ID
+   และใน `backend/Notify.gs` แก้ `LIFF_URL` ให้ตรงกับ LIFF ID
 8. LINE Developers: ตั้ง **Endpoint URL** ของ LIFF app เป็น URL ของหน้าเว็บ (เช่น `https://<user>.github.io/badminton/`)
 9. ทดสอบจาก editor: `testNotify`, `testDailyNotify` (ส่งข้อความทดสอบถึงแอดมิน)
 
 ฟังก์ชันที่รันมือจาก editor ได้: `initialSetup`, `setupTriggers`, `migrateChecklist` (ย้ายเช็คลิสต์รอบเก่า), `testNotify`, `testDailyNotify`
 
+## นำโค้ดเข้า Apps Script
+
+**วิธี A: clasp (แนะนำ)** ใช้คำสั่งเดียว push ทุกไฟล์ ไม่ต้องคัดลอกทีละไฟล์
+
+```bash
+npm install -g @google/clasp      # ต้องมี Node.js; ทำครั้งเดียว
+clasp login                        # ล็อกอินบัญชี Google ที่เป็นเจ้าของสคริปต์
+cp .clasp.json.example .clasp.json # แก้ scriptId (Project Settings > IDs ใน editor)
+clasp push                         # อัปโหลดโฟลเดอร์ backend/
+```
+
+ต้องเปิด Apps Script API ที่ https://script.google.com/home/usersettings ก่อน
+`.clasp.json` ไม่ถูก commit (อยู่ใน `.gitignore`)
+คำเตือน: `clasp push` เขียนทับ `appsscript.json` ของโปรเจกต์ ตรวจเขตเวลาใน Project Settings ว่าเป็น Asia/Bangkok ก่อน
+
+**วิธี B: ทำเอง** สร้างไฟล์ใน editor ให้ชื่อตรงกับ `backend/*.gs` ทีละไฟล์แล้ววางเนื้อหา (ลำดับไม่สำคัญ)
+
 ## ลำดับ deploy เมื่อแก้โค้ด (สำคัญ)
 
 หน้าเว็บกับ Apps Script deploy แยกกัน คนละเวลา ต้องทำตามลำดับนี้:
 
-1. **Apps Script ก่อน** — วางโค้ดใหม่ แล้ว Deploy → Manage deployments → Edit → *New version*
+1. **Apps Script ก่อน** — `clasp push` (หรือวางโค้ดใหม่) แล้ว Deploy → Manage deployments → Edit → *New version*
    (ถ้ากด Save เฉย ๆ URL `/exec` เดิมยังรันโค้ดเก่า)
 2. **จากนั้นค่อย merge หน้าเว็บเข้า `main`** (Pages อัปเดตเองใน 1–2 นาที)
 
@@ -66,7 +100,7 @@ Backend ควรรองรับหน้าเว็บทั้งเวอ
 | `BOOK_NOTICE_DAYS` | 2 | รอบวันหยุด: แจ้งแอดมินจำนวนคนก่อนวันเล่นกี่วัน (จองคอร์ด) |
 | `LINE_POST_TEMPLATE` | – | แม่แบบข้อความโพสต์กลุ่ม (แก้ได้จากหน้า "จัดการข้อมูล") |
 
-ตัวเลขมีช่วงที่ยอมรับ (ดู `SETTING_LIMITS` ใน `Code.gs`) ค่านอกช่วงจะถูกปฏิเสธตอนบันทึก และใช้ค่าเริ่มต้นแทนถ้ามีคนแก้ชีทด้วยมือ
+ตัวเลขมีช่วงที่ยอมรับ (ดู `SETTING_LIMITS` ใน `backend/Rules.gs`) ค่านอกช่วงจะถูกปฏิเสธตอนบันทึก และใช้ค่าเริ่มต้นแทนถ้ามีคนแก้ชีทด้วยมือ
 
 ## ความปลอดภัย
 
@@ -81,11 +115,11 @@ Backend ควรรองรับหน้าเว็บทั้งเวอ
 node tests/run.js
 ```
 
-ใช้ Node 18+ ไม่ต้องติดตั้งแพ็กเกจเพิ่ม ทดสอบโหลดซอร์ส Apps Script ใน `vm` ร่วมกับ mock ของ Sheets/Cache/Lock ครอบคลุมการลงชื่อ/ยกเลิก, การตรวจ token, แคช `getAllData`, การแก้รายชื่อของแอดมิน และการตรวจค่า Settings
+ใช้ Node 18+ ไม่ต้องติดตั้งแพ็กเกจเพิ่ม ทดสอบโหลดไฟล์ใน `backend/` ใน `vm` (ทั้งลำดับปกติและกลับด้าน เพื่อยืนยันว่าลำดับโหลดไม่มีผล) ร่วมกับ mock ของ Sheets/Cache/Lock ครอบคลุมการลงชื่อ/ยกเลิก, การตรวจ token, แคช `getAllData`, การแก้รายชื่อของแอดมิน และการตรวจค่า Settings
 ไม่ได้ทดสอบการเขียนชีทจริงและ trigger — ต้องลองในระบบจริงหลัง deploy
 
 ## GitHub Pages
 
-ปัจจุบัน Pages เสิร์ฟทั้ง repo จาก branch `main` (ทำให้ `Code.gs` เปิดอ่านได้ที่ `/Code.gs` ด้วย)
+ปัจจุบัน Pages เสิร์ฟทั้ง repo จาก branch `main` (ทำให้โค้ด backend เปิดอ่านได้ที่ `/backend/*.gs` ด้วย)
 ถ้าอยากเผยแพร่เฉพาะ `index.html`: ตั้ง repository variable `PAGES_VIA_ACTIONS` = `true` แล้วเปลี่ยน Settings → Pages → Source เป็น **GitHub Actions**
 (workflow [`pages.yml`](.github/workflows/pages.yml) จะ deploy เฉพาะ `index.html`)

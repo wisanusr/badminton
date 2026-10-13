@@ -1,4 +1,4 @@
-# Publishes ONLY the web page to GitHub Pages (so Code.gs is not served publicly).
+# Publishes ONLY the web page to GitHub Pages (so backend/*.gs is not served publicly).
 # Inactive until you opt in:
 #   1. Settings > Secrets and variables > Actions > Variables: add PAGES_VIA_ACTIONS = true
 #   2. Settings > Pages > Build and deployment > Source: GitHub Actions
