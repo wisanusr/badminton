@@ -44,6 +44,9 @@ function handleRequest(action, payload, idToken) {
 
   if (action === "me") return getMe(ss, line);
 
+  // อ่านอย่างเดียว ไม่ต้องถือ lock: ผู้เล่นกดการ์ดแต้ม หน้าเว็บขอลิงก์แต้มจริงของรอบนั้น
+  if (action === "claimPoint") return claimPoint(ss, line, payload);
+
   // อ่านอย่างเดียว ไม่ต้องถือ lock: ประวัติรอบ/รายชื่อทั้งหมดสำหรับหน้า "จัดการข้อมูล" ของแอดมิน (ไม่ผ่าน cache)
   if (action === "adminGetHistory") {
     requireAdmin(ss, line);

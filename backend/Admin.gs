@@ -1,8 +1,8 @@
 // Admin actions: session status, checklist tasks, registration edits, and sheet management (settings, sessions, users).
 
-const TASK_KEY_PATTERN = /^(Task\d+|Extra_Shuttles|Point_URL)$/;
+const TASK_KEY_PATTERN = /^(Task\d+|Extra_Shuttles)$/;
 
-// ลิงก์สแกนเก็บแต้มของรอบ: ว่าง (ล้างค่า) หรือ https:// เท่านั้น กันค่าอื่นหลุดเข้าไปในข้อความที่ส่งให้ผู้เล่น
+// ลิงก์บัตรสะสมแต้ม (Settings POINT_CARD_URL): ว่าง (ล้างค่า) หรือ https:// เท่านั้น กันค่าอื่นหลุดไปเป็นปลายทางที่ผู้เล่นถูกพาไป
 const POINT_URL_PATTERN = /^https:\/\/[^\s]{1,480}$/;
 
 function normalizePointUrl(v) {
@@ -26,7 +26,6 @@ function updateTask(ss, payload) {
   Object.keys(tasks).forEach(k => {
     if (!TASK_KEY_PATTERN.test(k)) fail("BAD_INPUT", "ไม่อนุญาตให้แก้คอลัมน์ " + k);
   });
-  if (tasks.Point_URL !== undefined) tasks.Point_URL = normalizePointUrl(tasks.Point_URL);
 
   const sheet = session.sheet;
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
@@ -125,14 +124,21 @@ function sessionTypeForDate(date) {
 
 const READONLY_SETTINGS = ["ADMIN_PASS", "ADMIN_LINE_IDS", "LINE_CHANNEL_ID"]; // ไม่ส่งออก ไม่ให้แก้ผ่านหน้าเว็บ
 
-const CREATABLE_SETTINGS = ["LINE_POST_TEMPLATE"];
+const CREATABLE_SETTINGS = ["LINE_POST_TEMPLATE", "POINT_CARD_URL", "POINT_CARD_EXPIRES"];
+
+const CREATABLE_SETTING_DESC = {
+  LINE_POST_TEMPLATE: "รูปแบบข้อความโพสต์กลุ่ม LINE (แก้จากหน้าจัดการข้อมูล)",
+  POINT_CARD_URL: "ลิงก์บัตรสะสมแต้มของ LINE OA (ผู้เล่นเห็นหลังระบบเช็กว่าลงชื่อ ว่าง = ไม่ส่งการ์ดแต้ม)",
+  POINT_CARD_EXPIRES: "วันหมดอายุของลิงก์รับแต้ม yyyy-MM-dd (ถึงวันนี้แจ้งแอดมินให้ใส่ลิงก์ใหม่ ว่าง = ไม่มีวันหมดอายุ)"
+};
 
 function adminGetSettings(ss) {
   const seen = {};
   const rows = getSheetDataAsJSON(ss.getSheetByName("Settings"))
     .filter(r => r.Key && READONLY_SETTINGS.indexOf(String(r.Key)) === -1 && LEGACY_SETTINGS.indexOf(String(r.Key)) === -1)
     .filter(r => !seen[r.Key] && (seen[r.Key] = true)) // Key ซ้ำในชีท: แสดงแถวแรกแถวเดียว
-    .map(r => ({ Key: String(r.Key), Value: r.Value, Description: r.Description || "" }));
+    // วันหมดอายุ: ชีทอาจแปลงเป็นวันที่เอง ส่งให้หน้าเว็บเป็น yyyy-MM-dd เสมอ
+    .map(r => ({ Key: String(r.Key), Value: r.Key === "POINT_CARD_EXPIRES" ? cardExpiryText(r.Value) : r.Value, Description: r.Description || "" }));
   return { status: "success", data: rows };
 }
 
@@ -141,6 +147,13 @@ function adminSaveSetting(ss, payload) {
   if (!key) fail("BAD_INPUT", "ไม่มีชื่อ Key");
   if (READONLY_SETTINGS.indexOf(key) !== -1) fail("FORBIDDEN", "ค่านี้แก้ผ่านหน้าเว็บไม่ได้");
   let value = typeof payload.value === "string" ? safeText(payload.value.trim()) : payload.value;
+
+  if (key === "POINT_CARD_URL") value = normalizePointUrl(value);
+  if (key === "POINT_CARD_EXPIRES") {
+    value = String(value === null || value === undefined ? "" : value).trim();
+    const ok = /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(value + "T00:00:00Z").toISOString().slice(0, 10) === value;
+    if (value !== "" && !ok) fail("BAD_INPUT", "วันหมดอายุไม่ถูกต้อง");
+  }
 
   const lim = SETTING_LIMITS[key];
   if (lim) {
@@ -161,7 +174,7 @@ function adminSaveSetting(ss, payload) {
   if (idx === -1) {
     // Key ที่หน้าเว็บสร้างเองได้ (ยังไม่เคยตั้งค่าในชีท)
     if (CREATABLE_SETTINGS.indexOf(key) === -1) fail("NOT_FOUND", "ไม่พบ Key นี้ในชีท Settings");
-    sheet.appendRow([key, value, "รูปแบบข้อความโพสต์กลุ่ม LINE (แก้จากหน้าจัดการข้อมูล)"]);
+    sheet.appendRow([key, value, CREATABLE_SETTING_DESC[key] || ""]);
   } else {
     sheet.getRange(idx + 1, 2).setValue(value);
   }
@@ -181,9 +194,6 @@ function adminSaveSession(ss, payload) {
   // ประเภทรอบดูจากวันที่เอง: เสาร์-อาทิตย์ = วันหยุด ที่เหลือ = วันธรรมดา (ยังรับ payload.type เพื่อรองรับหน้าเว็บเวอร์ชันเก่า)
   const type = payload.type !== undefined && String(payload.type).trim() !== "" ? String(payload.type).trim() : sessionTypeForDate(date);
   if (SESSION_TYPES.indexOf(type) === -1) fail("BAD_INPUT", "ประเภทรอบไม่ถูกต้อง");
-  // point_url ไม่ส่งมา = ไม่แตะลิงก์เดิม (หน้าเว็บยังโหลดประวัติไม่เสร็จจะไม่รู้ค่าเดิม) ส่งมาเป็นค่าว่าง = ล้างลิงก์
-  const pointUrl = payload.point_url === undefined ? undefined : normalizePointUrl(payload.point_url);
-
   const sheet = ss.getSheetByName("Sessions");
   const sid = String(payload.session_id || "").trim();
   if (sid) {
@@ -191,11 +201,6 @@ function adminSaveSession(ss, payload) {
     if (!session) fail("NOT_FOUND", "ไม่พบรอบตีนี้");
     sheet.getRange(session.row, 2, 1, 4).setValues([[date, type, location, status]]);
     sheet.getRange(session.row, 6).setValue(cost);
-    if (pointUrl !== undefined) {
-      ensureColumn(sheet, "Point_URL");
-      const col = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String).indexOf("Point_URL");
-      sheet.getRange(session.row, col + 1).setValue(pointUrl);
-    }
     return { status: "success", message: "บันทึกรอบตีแล้ว" };
   }
 
@@ -205,7 +210,7 @@ function adminSaveSession(ss, payload) {
     if (m) max = Math.max(max, Number(m[1]));
   });
   const newId = "S" + ("000" + (max + 1)).slice(-3);
-  appendByHeaders(sheet, { Session_ID: newId, Date: date, Type: type, Location: location, Status: status, Cost: cost, Point_URL: pointUrl || "" });
+  appendByHeaders(sheet, { Session_ID: newId, Date: date, Type: type, Location: location, Status: status, Cost: cost });
   return { status: "success", message: "เพิ่มรอบตีแล้ว (" + newId + ")" };
 }
 
