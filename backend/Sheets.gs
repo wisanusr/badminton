@@ -100,6 +100,17 @@ function getSheetDataAsJSON(sheet) {
   });
 }
 
+// คอลัมน์ในรายการ names ที่ชีทคุมด้วยสูตร (เช่น ARRAYFORMULA ที่เซลล์แถว 2 แล้วเติมลงมาทั้งคอลัมน์)
+// ห้ามเขียนค่าลงคอลัมน์พวกนี้: เซลล์ที่มีค่าชนกับสูตรที่เติมลงมา ทำให้สูตรเป็น #REF! และทั้งคอลัมน์ว่างหมด
+function formulaDrivenColumns(sheet, names) {
+  if (sheet.getLastRow() < 2) return [];
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
+  return names.filter(n => {
+    const col = headers.indexOf(n);
+    return col !== -1 && String(sheet.getRange(2, col + 1).getFormula() || "").trim() !== "";
+  });
+}
+
 // เขียนแถวใหม่ต่อจากแถวที่มีข้อมูลจริง (ดูจากคอลัมน์แรก) แทน sheet.appendRow
 // appendRow ต่อท้าย "แถวสุดท้ายที่มีอะไรอยู่" ถ้าคอลัมน์อื่นๆ ถูกลากกล่องติ๊ก/ค่า FALSE ไว้ล่วงหน้าหลายร้อยแถว (ชีท Sessions มีถึงแถว 999)
 // แถวใหม่จะไปอยู่ที่แถว 1000 ห่างจากรอบเดิมหลายร้อยแถว

@@ -708,6 +708,21 @@ test('audit: a broken log sheet never breaks the request; the log is pruned when
   assert.strictEqual(rows[rows.length - 1][AC.action], 'register');
 });
 
+test('adminSaveSession: refuses to write when Type/Location/Cost are formula columns (would turn the sheet into #REF!)', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const before = JSON.stringify(sheets.Sessions.rows);
+  sheets.Sessions.formulas = { '2,3': '=ARRAYFORMULA(IF(B2:B<>"", IF(WEEKDAY(B2:B, 2)<=5, "Workday", "Weekend"), ""))' };   // C2 = Type
+  expectCode(() => h('adminSaveSession', { date: '2030-03-04', location: 'Court Z', status: 'Open', cost: 200 }, 'tokAdmin'), 'FORMULA_COLUMN');
+  expectCode(() => h('adminSaveSession', { session_id: 'S3', date: '2030-03-04', location: 'Court Z', status: 'Open', cost: 200 }, 'tokAdmin'), 'FORMULA_COLUMN');
+  assert.strictEqual(JSON.stringify(sheets.Sessions.rows), before, 'nothing was written');
+  const last = auditRows(sheets).pop();
+  assert.strictEqual(last[AC.result], 'ERROR:FORMULA_COLUMN', 'the refusal is in the audit log');
+
+  sheets.Sessions.formulas = {};   // after the columns are converted to plain values the app writes again
+  h('adminSaveSession', { date: '2030-03-04', location: 'Court Z', status: 'Open', cost: 200 }, 'tokAdmin');
+  assert(sheets.Sessions.rows.some(r => String(r[3]) === 'Court Z'));
+});
+
 // ---------- runner ----------
 let failed = 0;
 const orders = [['normal', f => f], ['reversed', f => f.slice().reverse()]];
