@@ -54,7 +54,7 @@ function notifyAdminsCancel(ss, user, sessionId, removed) {
     sub: lines[2].replace("📅 ", ""),
     rows: [["ผู้เล่น", user.DisplayName], ["เวลา", hoursText], ["เหลือ", remain]],
     notes, button: { label: "เปิดแอป", uri: LIFF_URL }
-  }, text.replace(/\n/g, " ")), text);
+  }, `❌${user.DisplayName} • ยกเลิกคิวตีแบด • ${sessionDate ? formatThaiDate(sessionDate) : sid}`), text);
 }
 
 // ส่งข้อความหาหลายคนพร้อมกันผ่าน LINE Messaging API (multicast)
@@ -97,6 +97,11 @@ const LIFF_URL = "https://liff.line.me/2011972483-Ji3vTjW3"; // ลิงก์ 
 const DEFAULT_LINE_TEMPLATE = "{วัน}\n{สนาม}\n\n{รายชื่อ}\n\n🏸🏸🏸🏸🏸\nลงชื่อตีแบด {ลิงก์}";
 
 const TH_DAY_NAMES = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
+
+// ชื่อวันภาษาไทยของวันที่นั้น (เวลาไทย) เช่น "เสาร์"
+function thaiDayName(date) {
+  return TH_DAY_NAMES[+Utilities.formatDate(date, "Asia/Bangkok", "u") % 7];
+}
 
 const TH_MONTH_NAMES = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
 
@@ -241,7 +246,7 @@ function runAdminNotify(kind) {
         sub: `${formatThaiDate(date)}${session.location ? " • " + session.location : ""} (อีก ${days} วัน)`,
         rows: [["ลงชื่อแล้ว", `${regs.length} คน (ขั้นต่ำ ${rules.WEEKEND_MIN_PLAYERS})`], ["รายชื่อ", names]],
         notes, button: { label: "เปิดแอป", uri: LIFF_URL }
-      }, text.replace(/\n/g, " ")), text);
+      }, `📣น้องแทนค่ะ! วัน${thaiDayName(date)}นี้ตีแบดไหม มีคนลงชื่อ ${regs.length} คน`), text);
       if (bookRes.code === 200) markSent(`book_${sid}_${todayKey}`);
     }
 
@@ -323,7 +328,7 @@ function buildPointFlex(date, location, url) { // url = ลิงก์เข้
   const when = formatThaiDate(date) + (location ? " • " + location : "");
   return {
     type: "flex",
-    altText: `🏸 ขอบคุณพี่คนเก่ง รับแต้มสะสมได้ที่ ${url}`.slice(0, 400),
+    altText: "🏸รับแต้มตีแบดด้วยจ้า",
     contents: {
       type: "bubble",
       size: "kilo",
@@ -455,7 +460,7 @@ function pointExpiryNotify() {
     title, color: card.expired ? RED : ORANGE,
     rows: [["หมดอายุ", when]], body: note,
     button: { label: "ไปหน้าตั้งค่า", uri: LIFF_URL }
-  }, `${title} (${when})`), `${title}\n📅 หมดอายุ ${when}\n${note}`);
+  }, "⚠️แจ้งพี่นิวส์! อัพเดทลิงก์รับแต้ม Line OA ด้วยคะ"), `${title}\n📅 หมดอายุ ${when}\n${note}`);
   if (res.code === 200) markSent(key);
 }
 
@@ -522,7 +527,7 @@ function checkWeekendQuorumRun() {
       const reason = `มีคนลงชื่อ ${people.length} คน ไม่ถึง ${rules.WEEKEND_MIN_PLAYERS} คนตามเงื่อนไข จึงขอยกเลิกรอบนี้นะครับ\nไว้เจอกันรอบหน้า 🏸`;
       pushCardOrText(lineIds, buildNoticeFlex({
         title: "😢 งดตีรอบวันหยุด", color: RED, sub: when, body: reason
-      }, `😢 งดตีรอบวันหยุด ${when}`), `😢 งดตีรอบวันหยุด\n📅 ${when}\n${reason}`);
+      }, `😢ยกเลิกรอบตีแบด • ${when}`), `😢 งดตีรอบวันหยุด\n📅 ${when}\n${reason}`);
     }
     if (adminIds.length) {
       let msg = `📣 ระบบงดรอบวันหยุดอัตโนมัติ\n📅 ${when}\n👥 ลงชื่อ ${people.length}/${rules.WEEKEND_MIN_PLAYERS} คน: ${names}\n` +
@@ -533,7 +538,7 @@ function checkWeekendQuorumRun() {
         title: "📣 งดรอบอัตโนมัติ", color: RED, sub: when,
         rows: [["ลงชื่อ", `${people.length}/${rules.WEEKEND_MIN_PLAYERS} คน`], ["รายชื่อ", names], ["แจ้งแล้ว", `${lineIds.length} คน ทาง LINE`]],
         notes, button: { label: "เปิดแอป", uri: LIFF_URL }
-      }, `📣 ระบบงดรอบวันหยุดอัตโนมัติ ${when}`), msg);
+      }, `📣ยกเลิกรอบตีแบด • ${when}`), msg);
     }
   });
 }

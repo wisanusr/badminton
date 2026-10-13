@@ -388,7 +388,7 @@ test('notify: cancelling a seat sends the admins a card (text fallback when LINE
   const card = sent[0].messages[0];
   assert.strictEqual(card.type, 'flex');
   assert(cardTexts(card).includes('มีคนยกเลิกคิว') && cardTexts(card).includes('Alice'));
-  assert(card.altText.includes('Alice'));
+  assert(/^❌Alice • ยกเลิกคิวตีแบด • /.test(card.altText), 'chat-list preview: who cancelled and which day');
 
   const w2 = capturePushes(world, true);
   h('register', { session_id: 'S3' }, 'tokA');
@@ -405,6 +405,7 @@ test('notify: book-court notice to admins is a card with the player count and na
   assert.strictEqual(sent.length, 1);
   const txt = cardTexts(sent[0].messages[0]);
   assert(txt.includes('แจ้งจองคอร์ด') && txt.includes('Alice') && txt.includes('ยังไม่ถึงขั้นต่ำ'));
+  assert(/^📣น้องแทนค่ะ! วัน(เสาร์|อาทิตย์|จันทร์|อังคาร|พุธ|พฤหัสบดี|ศุกร์)นี้ตีแบดไหม มีคนลงชื่อ 1 คน$/.test(sent[0].messages[0].altText), 'chat-list preview of the book-court notice');
   G('bookCourtNotify')();
   assert.strictEqual(sent.length, 1, 'only once per day');
 });
@@ -417,9 +418,11 @@ test('notify: weekend short of players cancels, players get a card, admins get a
   const toPlayers = sent.find(b => b.to.includes('Ua'));
   assert.deepStrictEqual(toPlayers.to.sort(), ['Ua', 'Ub']);
   assert(cardTexts(toPlayers.messages[0]).includes('งดตีรอบวันหยุด'));
+  assert(/^😢ยกเลิกรอบตีแบด • .+ • Court B$/.test(toPlayers.messages[0].altText), 'players preview: day and venue');
   const toAdmin = sent.find(b => b.to.includes('Uadmin'));
   const txt = cardTexts(toAdmin.messages[0]);
   assert(txt.includes('งดรอบอัตโนมัติ') && txt.includes('Carol'), 'admin is told who to notify by hand');
+  assert(/^📣ยกเลิกรอบตีแบด • .+ • Court B$/.test(toAdmin.messages[0].altText), 'admin preview: day and venue');
 });
 
 test('notify: weekend with enough players tells the admins in plain text that the round goes ahead', ({ G, world, sheets }) => {
@@ -479,7 +482,7 @@ test('pointReminderNotify: needs the card link; today sessions only; linked play
   assert.strictEqual(card.type, 'flex');
   const gate = G('LIFF_URL') + '?claim=T1';
   assert.strictEqual(card.contents.footer.contents[0].action.uri, gate, 'button goes through the app, not straight to the card link');
-  assert(card.altText.includes(gate));
+  assert.strictEqual(card.altText, '🏸รับแต้มตีแบดด้วยจ้า', 'chat-list preview of the point card');
   assert(!JSON.stringify(sent).includes('real-card'), 'the real card link is never put in a LINE message');
   sent.status = 200;
   G('pointReminderNotify')();   // first send failed -> retried
@@ -585,6 +588,7 @@ test('pointExpiryNotify: tells admins on the expiry day, then again only on play
   assert.strictEqual(sent.length, 1);
   assert.deepStrictEqual(sent[0].to, ['Uadmin']);
   assert(text(0).includes('หมดอายุวันนี้'));
+  assert.strictEqual(sent[0].messages[0].altText, '⚠️แจ้งพี่นิวส์! อัพเดทลิงก์รับแต้ม Line OA ด้วยคะ', 'chat-list preview of the expiry notice');
   rerun();
   assert.strictEqual(sent.length, 1, 'once per day');
 
