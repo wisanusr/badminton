@@ -36,7 +36,8 @@ function mkSheet(rows) {
       };
     },
     appendRow(r) { this.rows.push(r); },
-    deleteRow(i) { this.rows.splice(i - 1, 1); }
+    deleteRow(i) { this.rows.splice(i - 1, 1); },
+    deleteRows(i, n) { this.rows.splice(i - 1, n); }
   };
 }
 

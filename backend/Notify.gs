@@ -63,6 +63,7 @@ function pushToLine(userIds, text) {
   const token = PropertiesService.getScriptProperties().getProperty("LINE_MESSAGING_TOKEN");
   if (!token) {
     console.warn("ยังไม่ได้ตั้ง LINE_MESSAGING_TOKEN ใน Script Properties");
+    auditNote("push ข้าม: ยังไม่ได้ตั้ง LINE_MESSAGING_TOKEN");
     return { code: 0, body: "missing token" };
   }
   const res = UrlFetchApp.fetch("https://api.line.me/v2/bot/message/multicast", {
@@ -76,6 +77,7 @@ function pushToLine(userIds, text) {
     muteHttpExceptions: true
   });
   const out = { code: res.getResponseCode(), body: res.getContentText() };
+  auditNote(`push ${[].concat(userIds).length} คน → ${out.code}`);
   if (out.code !== 200) console.error("LINE push failed: " + out.code + " " + out.body);
   return out;
 }
@@ -180,12 +182,14 @@ function pruneSentMarkers() {
 
 // ทริกเกอร์ทุกวัน 10:00: วันที่มีรอบตี → ส่งข้อความโพสต์กลุ่ม LINE ให้แอดมินคัดลอกไปโพสต์
 function dailyAdminNotify() {
-  runAdminNotify("post");
-  pointExpiryNotify();
+  auditRun("dailyAdminNotify", () => {
+    runAdminNotify("post");
+    pointExpiryNotify();
+  });
 }
 
 // ทริกเกอร์ทุกวัน 12:00: รอบวันหยุดที่อีก BOOK_NOTICE_DAYS วันจะเล่น → แจ้งจำนวนคนที่ลงชื่อ เพื่อให้จองคอร์ด
-function bookCourtNotify() { runAdminNotify("book"); }
+function bookCourtNotify() { auditRun("bookCourtNotify", () => runAdminNotify("book")); }
 
 function runAdminNotify(kind) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -380,13 +384,15 @@ function cardExpiryText(v) {
 
 // ทริกเกอร์ทุกวัน 21:00: วันเล่น → ส่งการ์ดให้ผู้เล่นที่ลงชื่อ (ผูก LINE แล้ว) ไปรับแต้มบัตรสะสมแต้มของ LINE OA
 // ส่งเมื่อตั้งลิงก์บัตรไว้และบัตรยังไม่หมดอายุ (วันสุดท้ายยังส่ง) รอบที่งดไม่ส่ง ผู้เล่นรับเอง ระบบไม่รู้ว่าใครรับแล้ว
-function pointReminderNotify() {
+function pointReminderNotify() { auditRun("pointReminderNotify", pointReminderRun); }
+
+function pointReminderRun() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureSheetsExist(ss);
   pruneSentMarkers();
   const card = getPointCard(ss);
-  if (!card.url) return console.log("pointReminderNotify: ข้าม เพราะยังไม่ได้ตั้งลิงก์รับแต้ม (POINT_CARD_URL ในหน้าตั้งค่า)");
-  if (card.expired) return console.log("pointReminderNotify: ข้าม เพราะลิงก์รับแต้มหมดอายุแล้ว (" + formatThaiDate(card.expires) + ")");
+  if (!card.url) return auditNote("pointReminderNotify: ข้าม เพราะยังไม่ได้ตั้งลิงก์รับแต้ม (POINT_CARD_URL ในหน้าตั้งค่า)");
+  if (card.expired) return auditNote("pointReminderNotify: ข้าม เพราะลิงก์รับแต้มหมดอายุแล้ว (" + formatThaiDate(card.expires) + ")");
 
   const todayKey = Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyyMMdd");
   let found = 0;
@@ -401,22 +407,22 @@ function pointReminderNotify() {
     const sid = String(row.Session_ID).trim();
     found++;
     const key = `point_${sid}_${todayKey}`;
-    if (wasSent(key)) return console.log(`pointReminderNotify: รอบ ${sid} ส่งไปแล้ววันนี้ (ลบ Script property "${key}" ถ้าต้องการส่งซ้ำเพื่อทดสอบ)`);
+    if (wasSent(key)) return auditNote(`pointReminderNotify: รอบ ${sid} ส่งไปแล้ววันนี้ (ลบ Script property "${key}" ถ้าต้องการส่งซ้ำเพื่อทดสอบ)`);
 
     const lineIds = allRegs
       .filter(r => String(r.Session_ID).trim() === sid)
       .map(r => lineById[String(r.User_ID).trim()])
       .filter((id, i, a) => id && a.indexOf(id) === i);
-    if (!lineIds.length) return console.log(`pointReminderNotify: รอบ ${sid} ไม่มีผู้ลงชื่อที่ผูก LINE จึงไม่มีใครให้ส่ง`);
+    if (!lineIds.length) return auditNote(`pointReminderNotify: รอบ ${sid} ไม่มีผู้ลงชื่อที่ผูก LINE จึงไม่มีใครให้ส่ง`);
 
     // การ์ดชี้ไปที่ระบบ (LIFF) ก่อน ระบบเช็กว่าคนกดลงชื่ออยู่ในรอบนี้แล้วค่อยพาไปลิงก์บัตรจริง ลิงก์จริงไม่ถูกส่งออกไปในข้อความ
     const gateUrl = pointGateUrl(sid);
     const res = pushCardOrText(lineIds, buildPointFlex(date, String(row.Location || "").trim(), gateUrl),
       `🏸 ขอบคุณพี่คนเก่ง (${formatThaiDate(date)})\nรับแต้มสะสม แล้วมาตบฟรีได้เลย 🎁\n${gateUrl}`);
-    console.log(`pointReminderNotify: รอบ ${sid} ส่งถึง ${lineIds.length} คน ผลจาก LINE = ${res.code}`);
+    auditNote(`pointReminderNotify: รอบ ${sid} ส่งถึง ${lineIds.length} คน ผลจาก LINE = ${res.code}`);
     if (res.code === 200) markSent(key);
   });
-  if (!found) console.log("pointReminderNotify: ไม่มีรอบที่เล่นวันนี้ (หรือรอบถูกงด) ตรวจวันที่ของรอบในชีท Sessions");
+  if (!found) auditNote("pointReminderNotify: ไม่มีรอบที่เล่นวันนี้ (หรือรอบถูกงด) ตรวจวันที่ของรอบในชีท Sessions");
 }
 
 // ทริกเกอร์ 10:00 (ต่อจาก dailyAdminNotify): ถึงวันหมดอายุของลิงก์รับแต้ม → แจ้งแอดมินให้ไปใส่ลิงก์ใหม่/วันหมดอายุใหม่ในหน้าตั้งค่า
@@ -425,19 +431,19 @@ function pointExpiryNotify() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureSheetsExist(ss);
   const card = getPointCard(ss);
-  if (!card.url || card.daysLeft === null || card.daysLeft > 0) return;
+  if (!card.url || card.daysLeft === null || card.daysLeft > 0) return auditNote("pointExpiryNotify: ไม่ต้องแจ้ง (ไม่ได้ตั้งลิงก์/วันหมดอายุ หรือยังไม่ถึงวันหมดอายุ)");
   const adminIds = getAdminIds(ss);
-  if (!adminIds.length) return;
+  if (!adminIds.length) return auditNote("pointExpiryNotify: ข้าม เพราะยังไม่ได้ตั้ง ADMIN_LINE_IDS");
 
   const key = `pexp_${Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyyMMdd")}`;
-  if (wasSent(key)) return;
+  if (wasSent(key)) return auditNote("pointExpiryNotify: วันนี้แจ้งไปแล้ว");
 
   if (card.expired) {
     const playToday = getSheetDataAsJSON(ss.getSheetByName("Sessions")).some(s => {
       const d = toSessionDate(s.Date);
       return s.Session_ID && String(s.Status).trim() !== "Cancelled" && d && daysUntil(d) === 0;
     });
-    if (!playToday) return;
+    if (!playToday) return auditNote("pointExpiryNotify: หมดอายุแล้ว แต่วันนี้ไม่มีรอบเล่น จึงไม่แจ้งซ้ำ");
   }
 
   const when = formatThaiDate(card.expires);
@@ -455,7 +461,9 @@ function pointExpiryNotify() {
 
 // รอบวันหยุดที่ปิดรับแล้ว: ถ้าคนไม่ถึงขั้นต่ำ → งดรอบ + แจ้งผู้เล่นทุกคน + แจ้งแอดมิน
 // ถ้าครบ → แจ้งแอดมินว่ารอบได้ไปต่อ (แต่ละรอบเช็คครั้งเดียว บันทึกไว้ในคอลัมน์ Quorum_Checked)
-function checkWeekendQuorum() {
+function checkWeekendQuorum() { auditRun("checkWeekendQuorum", checkWeekendQuorumRun); }
+
+function checkWeekendQuorumRun() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureSheetsExist(ss);
   const rules = getRules(ss);

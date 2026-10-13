@@ -174,7 +174,7 @@ function adminSaveSetting(ss, payload) {
   if (idx === -1) {
     // Key ที่หน้าเว็บสร้างเองได้ (ยังไม่เคยตั้งค่าในชีท)
     if (CREATABLE_SETTINGS.indexOf(key) === -1) fail("NOT_FOUND", "ไม่พบ Key นี้ในชีท Settings");
-    sheet.appendRow([key, value, CREATABLE_SETTING_DESC[key] || ""]);
+    appendRowAfterData(sheet, [key, value, CREATABLE_SETTING_DESC[key] || ""]);
   } else {
     sheet.getRange(idx + 1, 2).setValue(value);
   }

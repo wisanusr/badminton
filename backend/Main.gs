@@ -32,7 +32,22 @@ function createJsonResponse(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
+// ทุก action ผ่านที่นี่: ลงบันทึกใน AuditLog (ดู Audit.gs) แล้วคืนผลหรือโยน error เหมือนเดิม
 function handleRequest(action, payload, idToken) {
+  const audit = { source: "api", action, payload, who: "", before: null, after: null, t0: Date.now() };
+  _auditNotes = [];
+  let result = null, error = null;
+  try {
+    result = routeRequest(action, payload, idToken, audit);
+  } catch (err) {
+    error = err;
+  }
+  finishAudit(audit, error, result);
+  if (error) throw error;
+  return result;
+}
+
+function routeRequest(action, payload, idToken, audit) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureSheetsExist(ss);
 
@@ -41,6 +56,7 @@ function handleRequest(action, payload, idToken) {
 
   // ทุก action ที่เหลือต้องมี LINE ID token ที่ถูกต้อง
   const line = verifyIdToken(ss, idToken);
+  audit.who = `${line.name || ""} (${String(line.lineUid || "").slice(0, 8)})`.trim();
 
   if (action === "me") return getMe(ss, line);
 
@@ -58,10 +74,14 @@ function handleRequest(action, payload, idToken) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) fail("BUSY", "ระบบยุ่งมาก โปรดลองใหม่อีกครั้ง");
 
+  // นับแถวในชีทก่อน/หลัง (ในล็อกเดียวกัน) เพื่อให้ชีท AuditLog เห็นทันทีว่า action นี้ทำให้ข้อมูลเพิ่ม/ลดเท่าไหร่
+  const countNames = PLAYER_ACTIONS.indexOf(action) !== -1 ? ["Registrations", "Users"] : undefined;
+  try { audit.before = countRows(ss, countNames); } catch (e) { /* นับไม่ได้ก็ทำงานต่อ */ }
   let result;
   try {
     result = dispatchWrite(ss, line, action, payload, ctx);
   } finally {
+    try { audit.after = countRows(ss, countNames); } catch (e) { /* นับไม่ได้ก็ทำงานต่อ */ }
     clearDataCache(); // ข้อมูลเปลี่ยนแล้ว ให้โหลดใหม่จากชีท
     lock.releaseLock();
   }

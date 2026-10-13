@@ -100,9 +100,27 @@ function getSheetDataAsJSON(sheet) {
   });
 }
 
+// เขียนแถวใหม่ต่อจากแถวที่มีข้อมูลจริง (ดูจากคอลัมน์แรก) แทน sheet.appendRow
+// appendRow ต่อท้าย "แถวสุดท้ายที่มีอะไรอยู่" ถ้าคอลัมน์อื่นๆ ถูกลากกล่องติ๊ก/ค่า FALSE ไว้ล่วงหน้าหลายร้อยแถว (ชีท Sessions มีถึงแถว 999)
+// แถวใหม่จะไปอยู่ที่แถว 1000 ห่างจากรอบเดิมหลายร้อยแถว
+function appendRowAfterData(sheet, values) {
+  const last = sheet.getLastRow();
+  let row = 1; // อย่างน้อยเหลือแถวหัวตาราง
+  if (last > 0) {
+    const col = sheet.getRange(1, 1, last, 1).getValues();
+    for (let i = col.length - 1; i >= 0; i--) {
+      if (String(col[i][0]).trim() !== "") { row = i + 1; break; }
+    }
+  }
+  const target = row + 1;
+  if (sheet.getMaxRows && target > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), target - sheet.getMaxRows());
+  sheet.getRange(target, 1, 1, values.length).setValues([values]);
+  return target;
+}
+
 function appendByHeaders(sheet, obj) {
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
-  sheet.appendRow(headers.map(h => (obj[h] !== undefined ? obj[h] : "")));
+  appendRowAfterData(sheet, headers.map(h => (obj[h] !== undefined ? obj[h] : "")));
 }
 
 // กันชื่อที่ขึ้นต้นด้วย = + - @ ไม่ให้ชีทตีความเป็นสูตร
