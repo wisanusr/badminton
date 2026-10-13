@@ -127,19 +127,19 @@
         const DEFAULT_LINE_TEMPLATE = "{วัน}\n{สนาม}\n\n{รายชื่อ}\n\n🏸🏸🏸🏸🏸\nลงชื่อตีแบด {ลิงก์}";
         const renderLineTemplate = (tpl, vars) =>
             String(tpl || DEFAULT_LINE_TEMPLATE).replace(/\{([^{}\n]+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
-        // ช่วงค่าที่ยอมรับ (ตรงกับ SETTING_LIMITS ใน backend/Rules.gs) ค่านอกช่วงใช้ค่าเริ่มต้น กันหารศูนย์
-        const RULE_LIMITS = {
-            WORKDAY_HOUR_CAP: [1, 50], WEEKEND_CLOSE_DAYS: [0, 14], WORKDAY_MIN_PLAYERS: [0, 50], WEEKEND_MIN_PLAYERS: [0, 50],
-            COST_SPLIT_BASE: [1, 50], SHUTTLES_PER_SESSION: [0, 20], SHUTTLECOCK_PRICE: [0, 1000], BOOK_NOTICE_DAYS: [0, 14]
-        };
-        const readRules = (settings = {}) => {
+        // กติกาจริงมาจาก server (data.rules: ตรวจช่วงแล้ว ตัวเดียวกับที่ server ใช้ตัดสิน จึงไม่ต้องเก็บช่วงค่าซ้ำที่นี่)
+        // ถ้า server ยังไม่ส่ง rules (Apps Script เวอร์ชันเก่า) ใช้ค่าจาก Settings ตรงๆ โดยกันตัวหารเป็นศูนย์
+        const readRules = (serverRules, settings = {}) => {
             const r = { ...DEFAULT_RULES };
+            if (serverRules) {
+                Object.keys(r).forEach(k => { if (typeof serverRules[k] === 'number') r[k] = serverRules[k]; });
+                return r;
+            }
             Object.keys(r).forEach(k => {
                 const raw = settings[k];
-                if (raw === undefined || raw === "" || isNaN(Number(raw))) return;
-                const n = Number(raw), lim = RULE_LIMITS[k];
-                if (!lim || (n >= lim[0] && n <= lim[1])) r[k] = n;
+                if (raw !== undefined && raw !== "" && !isNaN(Number(raw))) r[k] = Number(raw);
             });
+            if (r.COST_SPLIT_BASE < 1) r.COST_SPLIT_BASE = DEFAULT_RULES.COST_SPLIT_BASE;
             return r;
         };
         // ส่วนต่างของรายชื่อ (base = ตอนเปิดหน้าแก้ไข, next = หลังแก้) ส่งเฉพาะที่เปลี่ยน ไม่ทับคนที่ลง/ยกเลิกระหว่างนั้น
@@ -581,7 +581,7 @@
             </div>
         );
 
-        function AdminPanel({ sessions, users, registrations, sendApiRequest, onChanged, onClose, showToast }) {
+        function AdminPanel({ sessions, users, registrations, limits = {}, sendApiRequest, onChanged, onClose, showToast }) {
             const [tab, setTab] = useState('sessions');
             const [editor, setEditor] = useState(null);      // { kind: 'session' | 'user', data }
             const [busy, setBusy] = useState(false);
@@ -879,7 +879,7 @@
                                                     ) : !wide && (
                                                         <div className="flex items-center gap-1.5 shrink-0">
                                                             <input type="number" inputMode="numeric" value={val} onChange={e => edit(e.target.value)}
-                                                                min={(RULE_LIMITS[r.Key] || [])[0]} max={(RULE_LIMITS[r.Key] || [])[1]}
+                                                                min={(limits[r.Key] || {}).min} max={(limits[r.Key] || {}).max}
                                                                 className="w-[72px] bg-gray-100 rounded-[10px] px-3 py-2 text-[16px] text-black text-right outline-none tabular-nums" />
                                                             {meta.unit && <span className="text-[14px] text-gray-500 w-8">{meta.unit}</span>}
                                                         </div>
@@ -937,6 +937,8 @@
             const [sessions, setSessions] = useState([]);
             const [allRegistrations, setAllRegistrations] = useState([]);
             const [appSettings, setAppSettings] = useState({});
+            const [serverRules, setServerRules] = useState(null);   // กติกาที่ server ตรวจช่วงแล้ว
+            const [ruleLimits, setRuleLimits] = useState({});       // ช่วงค่าที่ยอมรับของแต่ละคีย์ (ใช้กับช่องกรอก)
 
             // ---- auth ----
             const [currentUser, setCurrentUser] = useState(null);
@@ -1036,6 +1038,8 @@
                         setUsers(result.data.users || []);
                         setAllRegistrations(result.data.registrations || []);
                         setAppSettings(result.data.settings || {});
+                        setServerRules(result.data.rules || null);
+                        setRuleLimits(result.data.limits || {});
                     } else {
                         setGlobalError("โหลดข้อมูลไม่ได้: " + result.message);
                     }
@@ -1110,7 +1114,7 @@
             }, []);
 
             // ---------- derived ----------
-            const rules = useMemo(() => readRules(appSettings), [appSettings]);
+            const rules = useMemo(() => readRules(serverRules, appSettings), [serverRules, appSettings]);
             const myId = currentUser ? String(currentUser.User_ID) : '';
 
             const nameById = useMemo(() => {
@@ -1847,7 +1851,7 @@
                     <Toast message={toast.message} type={toast.type} />
                     {submitting && <GlobalLoader />}
                     {showAdminPage && isAdminUser
-                        ? <AdminPanel sessions={sessions} users={users} registrations={allRegistrations}
+                        ? <AdminPanel sessions={sessions} users={users} registrations={allRegistrations} limits={ruleLimits}
                             sendApiRequest={sendApiRequest} onChanged={fetchAllData} onClose={() => setShowAdminPage(false)} showToast={showToast} />
                         : selected ? renderDetail() : renderHome()}
                 </div>

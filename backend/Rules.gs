@@ -33,13 +33,19 @@ function settingInRange(key, n) {
   return isFinite(n) && n >= lim.min && n <= lim.max && (!lim.int || Math.floor(n) === n);
 }
 
-function getRules(ss) {
+// กติกาจากแถวของชีท Settings ([{Key, Value}, ...]) ค่านอกช่วงหรือไม่ใช่ตัวเลข → ใช้ค่าเริ่มต้น
+// เป็นแหล่งความจริงเดียวของกติกา: server ใช้เอง และส่งให้หน้าเว็บผ่าน getAllData (rules)
+function rulesFromSettings(rows) {
   const rules = Object.assign({}, DEFAULT_RULES);
-  getSheetDataAsJSON(ss.getSheetByName("Settings")).forEach(s => {
+  rows.forEach(s => {
     if (!rules.hasOwnProperty(s.Key) || s.Value === "" || isNaN(Number(s.Value))) return;
-    if (settingInRange(s.Key, Number(s.Value))) rules[s.Key] = Number(s.Value); // นอกช่วง → ใช้ค่าเริ่มต้น
+    if (settingInRange(s.Key, Number(s.Value))) rules[s.Key] = Number(s.Value);
   });
   return rules;
+}
+
+function getRules(ss) {
+  return rulesFromSettings(getSheetDataAsJSON(ss.getSheetByName("Settings")));
 }
 
 function inHour1(h) { h = String(h || "All"); return h === "All" || h.indexOf("18:00") === 0 || h.indexOf("16:00") === 0; }
