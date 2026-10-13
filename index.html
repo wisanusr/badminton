@@ -530,18 +530,25 @@
             if (isNaN(d.getTime())) return '';
             return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         };
+        // ชื่อสั้น จัดกลุ่มตามหัวข้อ (วันธรรมดา/วันหยุด/ค่าใช้จ่าย/แจ้งเตือน) hint = คำอธิบายใต้ชื่อ
         const SETTING_META = {
-            WORKDAY_HOUR_CAP:     { label: 'วันธรรมดา: รับสูงสุดต่อชั่วโมง', unit: 'คน', type: 'number' },
-            WEEKEND_MIN_PLAYERS:  { label: 'วันหยุด: ขั้นต่ำถึงจะเล่น', unit: 'คน', type: 'number' },
-            WORKDAY_MIN_PLAYERS:  { label: 'วันธรรมดา: เป้าหมายขั้นต่ำ', unit: 'คน', type: 'number' },
-            WEEKEND_CLOSE_DAYS:   { label: 'วันหยุด: ปิดรับก่อนวันเล่น', unit: 'วัน', type: 'number' },
-            COST_SPLIT_BASE:      { label: 'ค่าใช้จ่ายหารสูงสุด', unit: 'คน', type: 'number' },
-            SHUTTLES_PER_SESSION: { label: 'ลูกแบดที่รวมในค่าคอร์ดต่อรอบ', unit: 'ลูก', type: 'number' },
+            WORKDAY_HOUR_CAP:     { label: 'รับสูงสุด', unit: 'คน', type: 'number' },
+            WORKDAY_MIN_PLAYERS:  { label: 'ขั้นต่ำ', unit: 'คน', type: 'number', note: 'ใช้แสดงผลเท่านั้น ไม่งดรอบให้อัตโนมัติ' },
+            WEEKEND_MIN_PLAYERS:  { label: 'ขั้นต่ำ', unit: 'คน', type: 'number', note: 'ถ้าปิดรับแล้วมีคนไม่ถึง ระบบงดรอบและแจ้งผู้เล่นให้อัตโนมัติ' },
+            WEEKEND_CLOSE_DAYS:   { label: 'ปิดรับก่อนวันเล่น', unit: 'วัน', type: 'number' },
+            COST_SPLIT_BASE:      { label: 'ราคาขั้นต่ำ', unit: 'คน', type: 'number', note: 'หารค่าใช้จ่ายตามจำนวนคนนี้ ถ้ามาน้อยกว่าจะหารตามจริง ถ้ามามากกว่าจ่ายเท่าเดิม' },
             SHUTTLECOCK_PRICE:    { label: 'ราคาลูกแบด', unit: 'บาท', type: 'number' },
-            NOTIFY_CANCEL:        { label: 'แจ้งแอดมินทาง LINE เมื่อมีคนยกเลิก', type: 'bool' },
-            NOTIFY_PLAY_DAY:      { label: 'แจ้งแอดมิน 10:00 ในวันเล่น พร้อมข้อความโพสต์', type: 'bool' },
-            BOOK_NOTICE_DAYS:     { label: 'วันหยุด: แจ้งจำนวนคนก่อนวันเล่น (จองคอร์ด)', unit: 'วัน', type: 'number' }
+            SHUTTLES_PER_SESSION: { label: 'จำนวนลูกแบดเริ่มต้น', unit: 'ลูก', type: 'number' },
+            NOTIFY_CANCEL:        { label: 'แจ้งเมื่อมีคนยกเลิก', type: 'bool', note: 'ส่งหาแอดมินทาง LINE' },
+            NOTIFY_PLAY_DAY:      { label: 'ข้อความแจ้งเตือน 10:00', type: 'bool', note: 'ส่งข้อความโพสต์กลุ่มให้แอดมินตอน 10:00 ของวันเล่น' },
+            BOOK_NOTICE_DAYS:     { label: 'แจ้งจำนวนคนเพื่อจองคอร์ด', unit: 'วัน', type: 'number', note: 'แจ้งแอดมินก่อนวันเล่นกี่วัน (เฉพาะรอบวันหยุด)' }
         };
+        const SETTING_GROUPS = [
+            { title: 'วันธรรมดา', keys: ['WORKDAY_HOUR_CAP', 'WORKDAY_MIN_PLAYERS'] },
+            { title: 'วันหยุด', keys: ['WEEKEND_MIN_PLAYERS', 'WEEKEND_CLOSE_DAYS'] },
+            { title: 'ค่าใช้จ่าย', keys: ['COST_SPLIT_BASE', 'SHUTTLECOCK_PRICE', 'SHUTTLES_PER_SESSION'] },
+            { title: 'การแจ้งเตือนแอดมิน', keys: ['NOTIFY_CANCEL', 'NOTIFY_PLAY_DAY', 'BOOK_NOTICE_DAYS'] }
+        ];
         const HIDDEN_SETTING_KEYS = ['ADMIN_LINE_IDS', 'LINE_CHANNEL_ID', 'LINE_POST_TEMPLATE'];
         const SAMPLE_TPL_VARS = {
             'วัน': 'วันพฤหัสบดี 15-10-26', 'หัวข้อ': 'วันพฤหัสบดี/15/10/26 รพ.ศรีธัญญา', 'วันที่': 'พฤหัสบดี 15 ตุลาคม 2569', 'สนาม': 'รพ.ศรีธัญญา', 'เวลา': '18:00-20:00',
@@ -581,6 +588,61 @@
             </div>
         );
 
+        // ประเภทรอบดูจากวันที่ (เสาร์-อาทิตย์ = วันหยุด) ให้ตรงกับที่ server ตัดสิน
+        const sessionTypeOf = ymd => {
+            const [y, m, d] = String(ymd).split('-').map(Number);
+            const dow = new Date(y, (m || 1) - 1, d || 1).getDay();
+            return dow === 0 || dow === 6 ? 'Weekend' : 'Workday';
+        };
+        const TYPE_LABEL = { Workday: 'วันธรรมดา', Weekend: 'วันหยุด' };
+        const OTHER_LOCATION = '__other__';
+
+        // เลือกหลายคนด้วย checkbox (ใช้เพิ่มรายชื่อเข้ารอบ) แสดงเต็มจอแบบเดียวกับ AdminSheet
+        const MultiPicker = ({ title, options, onClose, onConfirm, single = false, confirmLabel }) => {
+            const [picked, setPicked] = useState({});
+            const [q, setQ] = useState('');
+            const list = options.filter(o => !q || o.label.toLowerCase().includes(q.toLowerCase()));
+            const n = Object.keys(picked).filter(k => picked[k]).length;
+            return (
+                <div className="fixed inset-0 z-[150] flex flex-col bg-[#F2F2F7] sheet-in">
+                    <div className="flex items-center justify-between px-4 py-3 bg-white/85 backdrop-blur-md border-b border-gray-200 pt-safe">
+                        <button onClick={onClose} className="text-[17px] text-[#007AFF]">ยกเลิก</button>
+                        <h3 className="text-[17px] font-semibold text-black">{title}</h3>
+                        <button onClick={() => onConfirm(Object.keys(picked).filter(k => picked[k]))} disabled={!n} className="text-[17px] text-[#007AFF] font-semibold disabled:opacity-40">{confirmLabel || `เพิ่ม${n ? ` ${n} คน` : ''}`}</button>
+                    </div>
+                    <div className="px-4 pt-3 max-w-md w-full mx-auto">
+                        <input value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหาชื่อ" className="w-full bg-white rounded-[14px] shadow-sm px-4 py-3 text-[16px] outline-none" />
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 pb-10 max-w-md w-full mx-auto">
+                        <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
+                            {list.map(o => (
+                                <label key={o.value} className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 last:border-0 active:bg-gray-50 cursor-pointer">
+                                    <input type="checkbox" checked={!!picked[o.value]} onChange={e => setPicked(single ? (e.target.checked ? { [o.value]: true } : {}) : { ...picked, [o.value]: e.target.checked })} className="w-5 h-5 accent-[#007AFF]" />
+                                    <span className="flex-1 min-w-0 truncate text-[16px] text-black">{o.label}</span>
+                                    {o.hint && <span className="text-[12px] text-gray-400">{o.hint}</span>}
+                                </label>
+                            ))}
+                            {list.length === 0 && <div className="p-6 text-center text-gray-400 text-[15px]">ไม่พบรายชื่อ</div>}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // หัวข้อที่พับได้ (ใช้แยกรายการรอบตีตามสถานะ)
+        const FoldGroup = ({ title, count, defaultOpen, children }) => {
+            const [open, setOpen] = useState(!!defaultOpen);
+            return (
+                <div className="mb-4">
+                    <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-1 mb-2 text-left">
+                        <span className="text-[13px] font-semibold text-gray-500">{title} <span className="font-normal">({count})</span></span>
+                        <span className="text-[13px] text-[#007AFF]">{open ? 'ซ่อน' : 'แสดง'}</span>
+                    </button>
+                    {open && <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">{children}</div>}
+                </div>
+            );
+        };
+
         function AdminPanel({ sessions, users, registrations, limits = {}, sendApiRequest, onChanged, onClose, showToast }) {
             const [tab, setTab] = useState('sessions');
             const [editor, setEditor] = useState(null);      // { kind: 'session' | 'user', data }
@@ -612,14 +674,40 @@
             // ---------- Sessions ----------
             const sessionList = sessions.filter(s => s.Session_ID)
                 .sort((a, b) => parseSessionDate(b.Date) - parseSessionDate(a.Date));
+            const todayStart = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
+            const isPastSession = s => !(parseSessionDate(s.Date) >= todayStart);
+            // แยกตามสถานะ: เปิดรับ (รวมปิดรับที่ยังไม่ถึงวัน เรียงจากใกล้สุด) / งด / ผ่านมาแล้ว
+            const sessionGroups = {
+                open: sessionList.filter(s => s.Status !== 'Cancelled' && !isPastSession(s)).reverse(),
+                cancelled: sessionList.filter(s => s.Status === 'Cancelled'),
+                past: sessionList.filter(s => s.Status !== 'Cancelled' && isPastSession(s))
+            };
+            // สนามที่เคยใช้ในฐานข้อมูล เรียงจากใช้บ่อยไปน้อย
+            const locationOptions = (() => {
+                const n = {};
+                sessions.forEach(s => { const l = String(s.Location || '').trim(); if (l) n[l] = (n[l] || 0) + 1; });
+                return Object.keys(n).sort((a, b) => n[b] - n[a]);
+            })();
+            const lastCostAt = loc => { const s = sessionList.find(x => String(x.Location || '').trim() === loc && x.Cost !== ''); return s ? s.Cost : null; };
 
-            const newSession = () => setEditor({ kind: 'session', data: { Session_ID: '', date: toInputDate(new Date()), type: 'Workday', location: '', status: 'Open', cost: 200 } });
+            const newSession = () => {
+                const loc = locationOptions[0] || '';
+                setEditor({ kind: 'session', data: { Session_ID: '', date: toInputDate(new Date()), location: loc, customLoc: !loc, status: 'Open', cost: loc && lastCostAt(loc) !== null ? lastCostAt(loc) : 200, pointUrl: '' } });
+            };
             const editSession = s => setEditor({ kind: 'session', data: {
-                Session_ID: s.Session_ID, date: toInputDate(s.Date), type: s.Type || 'Workday',
-                location: s.Location || '', status: s.Status || 'Open', cost: s.Cost === '' ? 0 : s.Cost } });
+                Session_ID: s.Session_ID, date: toInputDate(s.Date),
+                location: s.Location || '', customLoc: !!s.Location && !locationOptions.includes(String(s.Location).trim()), status: s.Status || 'Open', cost: s.Cost === '' ? 0 : s.Cost,
+                pointUrl: s.Point_URL !== undefined ? String(s.Point_URL) : null } }); // null = ยังโหลดประวัติไม่เสร็จ (ไม่รู้ลิงก์เดิม) จะไม่ส่งไปทับ
+            const pickLocation = v => {
+                if (v === OTHER_LOCATION) return setData({ customLoc: true, location: '' });
+                const patch = { customLoc: false, location: v };
+                if (!editor.data.Session_ID && lastCostAt(v) !== null) patch.cost = lastCostAt(v); // รอบใหม่: ใส่ค่าคอร์ดล่าสุดของสนามนั้นให้
+                setData(patch);
+            };
             const saveSession = async () => {
                 const d = editor.data;
-                const ok = await call('adminSaveSession', { session_id: d.Session_ID, date: d.date, type: d.type, location: d.location, status: d.status, cost: d.cost });
+                const ok = await call('adminSaveSession', { session_id: d.Session_ID, date: d.date, location: d.location.trim(), status: d.status, cost: d.cost,
+                    ...(d.pointUrl !== null && d.pointUrl !== undefined ? { point_url: d.pointUrl.trim() } : {}) });
                 if (ok) setEditor(null);
             };
             const deleteSession = async () => {
@@ -633,6 +721,21 @@
             const userList = users.filter(u => u.User_ID)
                 .filter(u => !query || String(u.DisplayName || '').toLowerCase().includes(query.toLowerCase()))
                 .sort((a, b) => String(a.DisplayName || '').localeCompare(String(b.DisplayName || ''), 'th'));
+            const linkedUsers = userList.filter(u => u.Linked);
+            const unlinkedUsers = userList.filter(u => !u.Linked);
+            const [mergeOpen, setMergeOpen] = useState(false);
+            const regCountOf = id => registrations.filter(r => String(r.User_ID) === String(id)).length;
+            // รวมบัญชี: บัญชีเก่า (ไม่ผูก LINE) = ตัวหลัก เก็บ ID เดิม รับการผูก LINE + รายชื่อจากบัญชีใหม่ที่ผูก LINE แล้ว
+            const mergeUser = async (ids) => {
+                const other = users.find(u => String(u.User_ID) === ids[0]);
+                if (!other) return;
+                const keepName = editor.data.name;
+                if (!window.confirm(`รวม "${other.DisplayName}" (ผูก LINE, ลง ${regCountOf(other.User_ID)} รอบ) เข้ากับ "${keepName}" (บัญชีเก่า)?
+
+เก็บ ID และชื่อของ "${keepName}" ย้ายการผูก LINE และรายชื่อมาให้ แล้วลบบัญชี "${other.DisplayName}" ถาวร`)) return;
+                const ok = await call('adminMergeUsers', { keep_id: editor.data.User_ID, merge_id: ids[0] });
+                if (ok) { setMergeOpen(false); setEditor(null); }
+            };
             const newUser = () => setEditor({ kind: 'user', data: { User_ID: '', name: '', skill: 'C', linked: false } });
             const editUser = u => setEditor({ kind: 'user', data: { User_ID: u.User_ID, name: u.DisplayName || '', skill: u.Skill_Level || '', linked: !!u.Linked } });
             const saveUser = async () => {
@@ -656,9 +759,8 @@
             const [regSession, setRegSession] = useState('');
             const [regRows, setRegRows] = useState([]);
             const [regBase, setRegBase] = useState([]);   // snapshot ตอนเลือกรอบ ใช้คำนวณส่วนต่างตอนบันทึก
-            const [regAdd, setRegAdd] = useState('');
+            const [regPickOpen, setRegPickOpen] = useState(false);
             const regSessionObj = sessions.find(s => String(s.Session_ID) === String(regSession));
-            const isWorkdayReg = !!regSessionObj && regSessionObj.Type === 'Workday';
             useEffect(() => {
                 if (tab !== 'regs' || regSession || !sessionList.length) return;
                 const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -670,15 +772,15 @@
                 const rows = registrations.filter(r => String(r.Session_ID) === String(regSession)).map(r => ({ ...r }));
                 setRegRows(rows);
                 setRegBase(rows);
-                setRegAdd('');
             };
             const [reloadTick, setReloadTick] = useState(0);
             useEffect(() => { loadRegs(); }, [regSession, reloadTick]);
-            const addReg = () => {
-                if (!regAdd) return;
-                if (regRows.some(r => String(r.User_ID) === regAdd)) return showToast('มีชื่อนี้ในรอบแล้ว', 'error');
-                setRegRows([...regRows, { User_ID: regAdd, Hours_Joined: 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() }]);
-                setRegAdd('');
+            const addRegs = ids => {
+                const have = new Set(regRows.map(r => String(r.User_ID)));
+                const now = new Date().toISOString();
+                const added = ids.filter(id => !have.has(id)).map(id => ({ User_ID: id, Hours_Joined: 'All', Payment_Status: 'Unpaid', Timestamp: now }));
+                setRegRows([...regRows, ...added]);
+                setRegPickOpen(false);
             };
             const saveRegs = async () => {
                 const d = diffRegs(regBase, regRows);
@@ -754,17 +856,26 @@
                         {tab === 'sessions' && (
                             <>
                                 <button onClick={newSession} className="w-full bg-white rounded-[14px] shadow-sm py-3 mb-3 text-[17px] text-[#007AFF] font-medium active:bg-gray-50">+ เพิ่มรอบตี</button>
-                                <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
-                                    {sessionList.map(s => (
+                                {(() => {
+                                    const row = s => (
                                         <button key={s.Session_ID} onClick={() => editSession(s)} className="w-full text-left px-4 py-3 border-b border-gray-100 last:border-0 active:bg-gray-50 flex items-center gap-3">
                                             <div className="flex-1 min-w-0">
                                                 <div className="text-[16px] text-black">{fmtShort(parseSessionDate(s.Date))} • {s.Location}</div>
-                                                <div className="text-[13px] text-gray-500">{s.Session_ID} • {s.Type === 'Workday' ? 'วันธรรมดา' : 'วันหยุด'} • {s.Cost} ฿</div>
+                                                <div className="text-[13px] text-gray-500">{s.Session_ID} • {TYPE_LABEL[s.Type] || s.Type} • {s.Cost} ฿</div>
                                             </div>
-                                            <span className="text-[12px] text-gray-500 bg-gray-100 rounded-full px-2 py-0.5">{STATUS_LABEL[s.Status] || s.Status}</span>
+                                            {s.Status === 'Closed' && <span className="text-[12px] text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">ปิดรับ</span>}
                                         </button>
-                                    ))}
-                                </div>
+                                    );
+                                    return (
+                                        <>
+                                            <FoldGroup title="เปิดรับ" count={sessionGroups.open.length} defaultOpen>
+                                                {sessionGroups.open.length ? sessionGroups.open.map(row) : <div className="p-5 text-center text-gray-400 text-[15px]">ไม่มีรอบที่เปิดรับ</div>}
+                                            </FoldGroup>
+                                            <FoldGroup title="งด" count={sessionGroups.cancelled.length}>{sessionGroups.cancelled.map(row)}</FoldGroup>
+                                            <FoldGroup title="ผ่านมาแล้ว" count={sessionGroups.past.length}>{sessionGroups.past.map(row)}</FoldGroup>
+                                        </>
+                                    );
+                                })()}
                             </>
                         )}
 
@@ -774,16 +885,25 @@
                                     <input value={query} onChange={e => setQuery(e.target.value)} placeholder="ค้นหาชื่อ" className="flex-1 bg-white rounded-[14px] shadow-sm px-4 py-3 text-[16px] outline-none" />
                                     <button onClick={newUser} className="bg-white rounded-[14px] shadow-sm px-4 text-[#007AFF] font-medium active:bg-gray-50">+ เพิ่ม</button>
                                 </div>
-                                <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
-                                    {userList.map(u => (
+                                {(() => {
+                                    const row = u => (
                                         <button key={u.User_ID} onClick={() => editUser(u)} className="w-full text-left px-4 py-3 border-b border-gray-100 last:border-0 active:bg-gray-50 flex items-center gap-3">
                                             <span className="flex-1 min-w-0 truncate text-[16px] text-black">{u.DisplayName}</span>
                                             {u.Skill_Level && <span className="text-[12px] text-gray-500">{u.Skill_Level}</span>}
-                                            <span className={`text-[12px] rounded-full px-2 py-0.5 ${u.Linked ? 'text-emerald-700 bg-emerald-50' : 'text-gray-500 bg-gray-100'}`}>{u.Linked ? 'ผูก LINE' : 'ไม่ผูก'}</span>
+                                            <span className="text-[12px] text-gray-400 tabular-nums">{regCountOf(u.User_ID)} รอบ</span>
                                         </button>
-                                    ))}
-                                    {userList.length === 0 && <div className="p-6 text-center text-gray-400 text-[15px]">ไม่พบสมาชิก</div>}
-                                </div>
+                                    );
+                                    return (
+                                        <>
+                                            <FoldGroup title="ผูก LINE แล้ว" count={linkedUsers.length} defaultOpen>
+                                                {linkedUsers.length ? linkedUsers.map(row) : <div className="p-5 text-center text-gray-400 text-[15px]">ไม่พบสมาชิก</div>}
+                                            </FoldGroup>
+                                            <FoldGroup title="ยังไม่ผูก LINE" count={unlinkedUsers.length} defaultOpen>
+                                                {unlinkedUsers.length ? unlinkedUsers.map(row) : <div className="p-5 text-center text-gray-400 text-[15px]">ไม่พบสมาชิก</div>}
+                                            </FoldGroup>
+                                        </>
+                                    );
+                                })()}
                             </>
                         )}
 
@@ -803,23 +923,16 @@
                                                 <button onClick={() => setRegRows(regRows.filter((_, j) => j !== i))}
                                                     className="w-8 h-8 rounded-full bg-[#FF3B30]/10 flex items-center justify-center text-[#FF3B30]"><IconTrash size={16} /></button>
                                             </div>
-                                            {isWorkdayReg && (
-                                                <select value={hoursOf(r)} onChange={e => patchReg(i, { Hours_Joined: e.target.value })}
-                                                    className="w-full mt-2 bg-gray-100 rounded-[8px] px-2 py-1.5 text-[14px] outline-none">
-                                                    <option value="All">2 ชม.</option><option value={H1}>{H1}</option><option value={H2}>{H2}</option>
-                                                </select>
-                                            )}
                                         </div>
                                     ))}
                                 </div>
-                                <div className="flex gap-2 mb-3">
-                                    <select value={regAdd} onChange={e => setRegAdd(e.target.value)} className="flex-1 bg-white rounded-[14px] shadow-sm px-3 py-3 text-[16px] outline-none">
-                                        <option value="">เพิ่มผู้เล่น...</option>
-                                        {[...users].sort((a, b) => String(a.DisplayName).localeCompare(String(b.DisplayName), 'th'))
-                                            .map(u => <option key={u.User_ID} value={String(u.User_ID)}>{u.DisplayName}</option>)}
-                                    </select>
-                                    <button onClick={addReg} className="bg-white rounded-[14px] shadow-sm px-4 text-[#007AFF] font-medium active:bg-gray-50">เพิ่ม</button>
-                                </div>
+                                <button onClick={() => setRegPickOpen(true)} disabled={!regSession} className="w-full bg-white rounded-[14px] shadow-sm py-3 mb-3 text-[17px] text-[#007AFF] font-medium active:bg-gray-50 disabled:opacity-50">+ เพิ่มผู้เล่น</button>
+                                {regPickOpen && (
+                                    <MultiPicker title="เพิ่มผู้เล่น" onClose={() => setRegPickOpen(false)} onConfirm={addRegs}
+                                        options={users.filter(u => u.User_ID && !regRows.some(r => String(r.User_ID) === String(u.User_ID)))
+                                            .sort((a, b) => String(a.DisplayName).localeCompare(String(b.DisplayName), 'th'))
+                                            .map(u => ({ value: String(u.User_ID), label: u.DisplayName }))} />
+                                )}
                                 <button onClick={saveRegs} disabled={busy || !regSession} className="w-full bg-[#007AFF] text-white font-semibold py-3.5 rounded-[14px] active:opacity-80 disabled:opacity-50">บันทึกรายชื่อ</button>
                             </>
                         )}
@@ -851,8 +964,9 @@
 
                         {tab === 'settings' && (
                             !settingRows ? <div className="p-10 text-center text-gray-400">กำลังโหลด...</div> : (
-                                <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
-                                    {settingRows.filter(r => !HIDDEN_SETTING_KEYS.includes(r.Key)).map(r => {
+                                (() => {
+                                    const visible = settingRows.filter(r => !HIDDEN_SETTING_KEYS.includes(r.Key));
+                                    const renderRow = r => {
                                         const meta = SETTING_META[r.Key] || {};
                                         const val = settingEdits[r.Key] !== undefined ? settingEdits[r.Key] : String(r.Value);
                                         const changed = settingEdits[r.Key] !== undefined && settingEdits[r.Key] !== String(r.Value);
@@ -868,7 +982,7 @@
                                                 <div className="flex items-center gap-3">
                                                     <div className="flex-1 min-w-0">
                                                         <div className="text-[16px] text-black leading-snug">{meta.label || r.Description || r.Key}</div>
-                                                        <div className="text-[11px] text-gray-400 font-mono truncate">{r.Key}</div>
+                                                        
                                                     </div>
                                                     {saveBtn}
                                                     {isBool ? (
@@ -888,11 +1002,20 @@
                                                 {wide && (
                                                     <input value={val} onChange={e => edit(e.target.value)} placeholder={meta.hint || ''} className={`${FIELD} mt-2 font-mono text-[14px]`} />
                                                 )}
-                                                {meta.warn && <div className="text-[12px] text-[#FF9500] mt-1.5">{meta.warn}</div>}
+                                                {meta.note && <div className="text-[12px] text-gray-500 mt-1.5">{meta.note}</div>}
                                             </div>
                                         );
-                                    })}
-                                </div>
+                                    };
+                                    const grouped = new Set(SETTING_GROUPS.flatMap(g => g.keys));
+                                    const groups = SETTING_GROUPS.map(g => ({ title: g.title, rows: g.keys.map(k => visible.find(r => r.Key === k)).filter(Boolean) }))
+                                        .concat([{ title: 'อื่นๆ', rows: visible.filter(r => !grouped.has(r.Key)) }]).filter(g => g.rows.length);
+                                    return groups.map(g => (
+                                        <div key={g.title} className="mb-5">
+                                            <SectionTitle>{g.title}</SectionTitle>
+                                            <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">{g.rows.map(renderRow)}</div>
+                                        </div>
+                                    ));
+                                })()
                             )
                         )}
                     </div>
@@ -901,30 +1024,52 @@
                         <AdminSheet title={editor.data.Session_ID ? `แก้ไขรอบ ${editor.data.Session_ID}` : 'เพิ่มรอบตี'} busy={busy}
                             onClose={() => setEditor(null)} onSave={saveSession} onDelete={editor.data.Session_ID ? deleteSession : null}>
                             <AdminField label="วันที่"><input type="date" value={editor.data.date} onChange={e => setData({ date: e.target.value })} className={FIELD} /></AdminField>
-                            <AdminField label="ประเภท">
-                                <select value={editor.data.type} onChange={e => setData({ type: e.target.value })} className={FIELD}>
-                                    <option value="Workday">วันธรรมดา</option><option value="Weekend">วันหยุด</option>
+                            <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+                                <span className="text-[13px] text-gray-500">ประเภท (ดูจากวันที่)</span>
+                                <span className="text-[15px] text-black">{editor.data.date ? TYPE_LABEL[sessionTypeOf(editor.data.date)] : '-'}</span>
+                            </div>
+                            <AdminField label="สนาม">
+                                <select value={editor.data.customLoc ? OTHER_LOCATION : editor.data.location} onChange={e => pickLocation(e.target.value)} className={FIELD}>
+                                    {locationOptions.map(l => <option key={l} value={l}>{l}</option>)}
+                                    <option value={OTHER_LOCATION}>สนามอื่น (พิมพ์เอง)...</option>
                                 </select>
+                                {editor.data.customLoc && <input value={editor.data.location} onChange={e => setData({ location: e.target.value })} placeholder="ชื่อสนามใหม่" className={`${FIELD} mt-2`} />}
                             </AdminField>
-                            <AdminField label="สนาม"><input value={editor.data.location} onChange={e => setData({ location: e.target.value })} className={FIELD} /></AdminField>
                             <AdminField label="สถานะ">
                                 <select value={editor.data.status} onChange={e => setData({ status: e.target.value })} className={FIELD}>
                                     <option value="Open">เปิดรับ</option><option value="Closed">ปิดรับ</option><option value="Cancelled">งด</option>
                                 </select>
                             </AdminField>
                             <AdminField label="ค่าคอร์ด (บาท)"><input type="number" inputMode="numeric" value={editor.data.cost} onChange={e => setData({ cost: e.target.value })} className={FIELD} /></AdminField>
+                            <AdminField label="ลิงก์สแกนเก็บแต้ม (ส่งให้ผู้ลงชื่อ 21:00 วันเล่น ว่าง = ไม่ส่ง)">
+                                <input type="url" inputMode="url" placeholder={editor.data.pointUrl === null ? 'กำลังโหลด...' : 'https://...'} disabled={editor.data.pointUrl === null}
+                                    value={editor.data.pointUrl || ''} onChange={e => setData({ pointUrl: e.target.value })} className={FIELD} />
+                            </AdminField>
                         </AdminSheet>
                     )}
 
                     {editor && editor.kind === 'user' && (
                         <AdminSheet title={editor.data.User_ID ? 'แก้ไขสมาชิก' : 'เพิ่มสมาชิก'} busy={busy}
                             onClose={() => setEditor(null)} onSave={saveUser} onDelete={editor.data.User_ID ? deleteUser : null}
-                            extra={editor.data.User_ID && editor.data.linked && (
+                            extra={editor.data.User_ID && (editor.data.linked ? (
                                 <button onClick={unlinkUser} disabled={busy} className="w-full bg-white rounded-[14px] shadow-sm py-3.5 mb-3 text-[17px] text-[#FF9500] active:bg-gray-50 disabled:opacity-50">ปลดการผูก LINE</button>
-                            )}>
+                            ) : (
+                                <div className="mb-3">
+                                    <button onClick={() => setMergeOpen(true)} disabled={busy} className="w-full bg-white rounded-[14px] shadow-sm py-3.5 text-[17px] text-[#007AFF] active:bg-gray-50 disabled:opacity-50">รวมกับบัญชีที่ผูก LINE แล้ว</button>
+                                    <div className="text-[12px] text-gray-500 px-2 mt-1.5">ใช้เมื่อเขาสร้างโปรไฟล์ใหม่ตอนผูก LINE แต่ประวัติอยู่ในบัญชีนี้ ระบบเก็บบัญชีนี้ไว้ แล้วย้ายการผูก LINE และรายชื่อจากบัญชีใหม่มาให้</div>
+                                </div>
+                            ))}>
                             <AdminField label="ชื่อ"><input value={editor.data.name} onChange={e => setData({ name: e.target.value })} className={FIELD} /></AdminField>
                             <AdminField label="ระดับฝีมือ"><input value={editor.data.skill} onChange={e => setData({ skill: e.target.value })} className={FIELD} /></AdminField>
                         </AdminSheet>
+                    )}
+
+                    {editor && editor.kind === 'user' && mergeOpen && (
+                        <MultiPicker single title={`รวมเข้ากับ ${editor.data.name}`} confirmLabel="รวม"
+                            options={users.filter(u => u.Linked && String(u.User_ID) !== String(editor.data.User_ID))
+                                .sort((a, b) => String(a.DisplayName).localeCompare(String(b.DisplayName), 'th'))
+                                .map(u => ({ value: String(u.User_ID), label: u.DisplayName, hint: `${regCountOf(u.User_ID)} รอบ` }))}
+                            onClose={() => setMergeOpen(false)} onConfirm={mergeUser} />
                     )}
                 </div>
             );

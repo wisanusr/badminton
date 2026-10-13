@@ -379,6 +379,52 @@ test('pointReminderNotify: only today sessions with a link, linked players once,
   assert.strictEqual(sent.length, 2);
 });
 
+test('adminSaveSession: point_url saved, cleared, left alone when omitted, validated', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const base = { session_id: 'S3', date: '2030-01-05', type: 'Weekend', location: 'Court B', status: 'Open', cost: 240 };
+  const col = () => sheets.Sessions.rows[0].indexOf('Point_URL');
+  h('adminSaveSession', { ...base, point_url: 'https://lin.ee/a' }, 'tokAdmin');
+  assert.strictEqual(sheets.Sessions.rows[3][col()], 'https://lin.ee/a');
+  h('adminSaveSession', { ...base, cost: 250 }, 'tokAdmin'); // history not loaded yet in the UI -> field omitted
+  assert.strictEqual(sheets.Sessions.rows[3][col()], 'https://lin.ee/a', 'omitted point_url keeps the existing link');
+  expectCode(() => h('adminSaveSession', { ...base, point_url: 'http://insecure' }, 'tokAdmin'), 'BAD_INPUT');
+  h('adminSaveSession', { ...base, point_url: '' }, 'tokAdmin');
+  assert.strictEqual(sheets.Sessions.rows[3][col()], '');
+  h('adminSaveSession', { date: '2030-02-02', type: 'Workday', location: 'New', status: 'Open', cost: 200, point_url: 'https://lin.ee/n' }, 'tokAdmin');
+  assert.strictEqual(sheets.Sessions.rows[sheets.Sessions.rows.length - 1][col()], 'https://lin.ee/n');
+});
+
+test('adminSaveSession: type is derived from the date (Sat/Sun = Weekend)', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const add = date => {
+    h('adminSaveSession', { date, location: 'X', status: 'Open', cost: 200 }, 'tokAdmin');
+    return sheets.Sessions.rows[sheets.Sessions.rows.length - 1][2];
+  };
+  assert.strictEqual(add('2030-01-05'), 'Weekend'); // Saturday
+  assert.strictEqual(add('2030-01-06'), 'Weekend'); // Sunday
+  assert.strictEqual(add('2030-01-07'), 'Workday'); // Monday
+  assert.strictEqual(add('2030-01-11'), 'Workday'); // Friday
+});
+
+test('adminMergeUsers: keeps the old id, takes the LINE link + registrations, skips duplicate sessions', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  sheets.Registrations.appendRow([1, 'S3', 'U1', 'All', false, 'Unpaid']); // U1 also in S3 where U3 already is
+  const regCount = (u) => sheets.Registrations.rows.slice(1).filter(r => r[2] === u).length;
+  expectCode(() => h('adminMergeUsers', { keep_id: 'U2', merge_id: 'U1' }, 'tokAdmin'), 'BAD_INPUT'); // both linked
+  expectCode(() => h('adminMergeUsers', { keep_id: 'U3', merge_id: 'U3' }, 'tokAdmin'), 'BAD_INPUT');
+  expectCode(() => h('adminMergeUsers', { keep_id: 'U3', merge_id: 'nope' }, 'tokAdmin'), 'NOT_FOUND');
+  expectCode(() => h('adminMergeUsers', { keep_id: 'U3', merge_id: 'U1' }, 'tokA'), 'FORBIDDEN');
+  const before = regCount('U1') + regCount('U3');
+  h('adminMergeUsers', { keep_id: 'U3', merge_id: 'U1' }, 'tokAdmin');
+  const users = sheets.Users.rows;
+  const lineCol = users[0].indexOf('Line_UID');
+  assert(!users.some(r => r[0] === 'U1'), 'merged account is gone');
+  assert.strictEqual(users.find(r => r[0] === 'U3')[lineCol], 'Ua', 'old profile now carries the LINE link');
+  assert.strictEqual(regCount('U1'), 0);
+  assert.strictEqual(regCount('U3'), before - 1, 'S3 duplicate dropped, others moved');
+  assert.strictEqual(sheets.Registrations.rows.slice(1).filter(r => r[1] === 'S3' && r[2] === 'U3').length, 1);
+});
+
 // ---------- runner ----------
 let failed = 0;
 const orders = [['normal', f => f], ['reversed', f => f.slice().reverse()]];
