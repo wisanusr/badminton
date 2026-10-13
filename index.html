@@ -290,7 +290,7 @@
 
         // แถบจำนวนคน: mode "cap" = เต็มเมื่อถึงเพดาน, mode "min" = ผ่านเมื่อถึงขั้นต่ำ
         // mode: 'cap' = เต็มเมื่อถึง target | 'min' = ต้องถึง target | 'range' = ขั้นต่ำ min (ขีดบนแถบ) เต็มที่ target
-        const CapacityBar = ({ label, count, target, min, mode = 'cap' }) => {
+        const CapacityBar = ({ label, count, target, min, mode = 'cap', showCount = true }) => {
             const pct = Math.min(100, target > 0 ? (count / target) * 100 : 0);
             const reached = count >= target;
             let barColor, textColor = 'text-gray-500';
@@ -303,14 +303,14 @@
             }
             return (
                 <div className="flex items-center gap-2 text-[12px]">
-                    <span className="w-12 text-gray-500 shrink-0">{label}</span>
+                    {label && <span className="w-12 text-gray-500 shrink-0">{label}</span>}
                     <div className="relative flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                         <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${pct}%` }} />
                         {mode === 'range' && min > 0 && min < target && (
                             <div className="absolute top-0 h-full w-[2px] bg-white/90 mix-blend-normal" style={{ left: `calc(${(min / target) * 100}% - 1px)` }} />
                         )}
                     </div>
-                    <span className={`w-10 text-right tabular-nums ${textColor}`}>{count}/{target}</span>
+                    {showCount && <span className={`w-10 text-right tabular-nums ${textColor}`}>{count}/{target}</span>}
                 </div>
             );
         };
@@ -328,12 +328,7 @@
             );
         };
 
-        const WorkdayBars = ({ info }) => info.regs.every(r => hoursOf(r) === 'All')
-            ? <CapacityBar label="18-20 น." count={info.regs.length} target={info.cap} min={info.min} mode="range" />
-            : <>
-                <CapacityBar label="18-19 น." count={info.h1} target={info.cap} />
-                <CapacityBar label="19-20 น." count={info.h2} target={info.cap} />
-            </>;
+        const WorkdayBars = ({ info }) => <CapacityBar count={info.regs.length} target={info.cap} min={info.min} mode="range" showCount={false} />;
 
         const SessionSkeleton = () => (
             <div className="bg-white rounded-[20px] shadow-sm p-4 animate-pulse flex gap-3.5">
@@ -403,8 +398,8 @@
             const dim = info.isPast || info.isCancelled;
             const pendingTasks = showTasks && info.isPast && !info.isCancelled ? TASKS.filter(t => !isTrue(s[t.key])) : [];
 
-            let subtitle = timeRange(info.isWorkday);
-            if (!info.isWorkday && !dim && !info.weekendClosed) subtitle += ` • ลงได้ถึง ${fmtShort(info.lastRegDay)}`;
+            const subtitle = timeRange(info.isWorkday);
+            const showCloseDate = !info.isWorkday && !dim && !info.weekendClosed;
 
             return (
                 <button id={`session-${s.Session_ID}`} onClick={onOpen}
@@ -416,35 +411,31 @@
                                 <span className={`font-semibold text-[17px] truncate ${info.isCancelled ? 'line-through text-gray-400' : 'text-black'}`}>
                                     {s.Location || 'ไม่ระบุสนาม'}
                                 </span>
-                                {mine && !info.isCancelled && (
-                                    <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-[#007AFF] bg-blue-50 px-2 py-0.5 rounded-full">
-                                        <IconCheckCircle size={11} /> ลงแล้ว
-                                    </span>
-                                )}
                             </div>
                             <div className="text-[13px] text-gray-500 mt-0.5 truncate">
                                 {TH_MONTHS_SHORT[info.date.getMonth()]} • {subtitle}
                             </div>
+                            {showCloseDate && (
+                                <div className="text-[13px] text-gray-500 truncate">
+                                    ปิดรับ {info.lastRegDay.getDate()} {TH_MONTHS_SHORT[info.lastRegDay.getMonth()]}
+                                </div>
+                            )}
                         </div>
                         <span className={`shrink-0 text-[12px] font-semibold px-2.5 py-1 rounded-full ${TONES[info.badge.tone]}`}>{info.badge.text}</span>
                     </div>
 
                     {!dim && (
-                        <div className="mt-3.5 pl-[62px] space-y-1.5">
+                        <div className="mt-3 space-y-1">
                             {info.isWorkday ? (
                                     <WorkdayBars info={info} />
                             ) : (
-                                <CapacityBar label="ขั้นต่ำ" count={info.regs.length} target={info.min} mode="min" />
+                                <CapacityBar count={info.regs.length} target={info.min} mode="min" showCount={false} />
                             )}
-                            <div className="flex items-center justify-between pt-1.5">
-                                <span className="text-[13px] text-gray-500">{info.regs.length > 0 ? `${info.regs.length} คน` : 'ยังไม่มีคนลงชื่อ'}{info.isWorkday && ` • รับสูงสุด ${info.cap}`}</span>
-                                <span className="text-[14px] font-semibold text-black tabular-nums">
-                                    {info.regs.length > 0 && info.costs.splitBy < rules.COST_SPLIT_BASE && <span className="text-[12px] font-normal text-gray-400 mr-1">ตอนนี้</span>}
-                                    คนละ {info.costs.perHead} ฿
-                                </span>
+                            <div className="flex justify-end pt-1">
+                                <span className="text-[13px] text-gray-500 tabular-nums">{info.regs.length > 0 ? `${info.regs.length} คน` : 'ยังไม่มีคนลงชื่อ'}</span>
                             </div>
                             {info.regs.length > 0 && (
-                                <div className="flex flex-wrap gap-1.5 pt-1">
+                                <div className="flex flex-wrap gap-1 pt-1">
                                     {info.regs.map((r, i) => (
                                         <NameChip key={i} name={getUserName(r.User_ID)} picture={getUserPicture(r.User_ID)} isMe={String(r.User_ID) === myId} />
                                     ))}
