@@ -392,10 +392,30 @@ const DEFAULT_RULES = {
 };
 const WORKDAY_HOURS = ["All", "18:00-19:00", "19:00-20:00"];
 
+// ช่วงค่าที่ยอมรับของ Settings ตัวเลข (ใช้ทั้งตอนบันทึกและตอนอ่านกติกา กันหารศูนย์/ค่าติดลบ)
+const SETTING_LIMITS = {
+  WORKDAY_HOUR_CAP:     { min: 1, max: 50, int: true },
+  WEEKEND_CLOSE_DAYS:   { min: 0, max: 14, int: true },
+  WORKDAY_MIN_PLAYERS:  { min: 0, max: 50, int: true },
+  WEEKEND_MIN_PLAYERS:  { min: 0, max: 50, int: true },
+  COST_SPLIT_BASE:      { min: 1, max: 50, int: true },
+  SHUTTLES_PER_SESSION: { min: 0, max: 20, int: true },
+  SHUTTLECOCK_PRICE:    { min: 0, max: 1000, int: false },
+  BOOK_NOTICE_DAYS:     { min: 0, max: 14, int: true }
+};
+const BOOL_SETTINGS = ["NOTIFY_CANCEL", "NOTIFY_PLAY_DAY"];
+
+function settingInRange(key, n) {
+  const lim = SETTING_LIMITS[key];
+  if (!lim) return true;
+  return isFinite(n) && n >= lim.min && n <= lim.max && (!lim.int || Math.floor(n) === n);
+}
+
 function getRules(ss) {
   const rules = Object.assign({}, DEFAULT_RULES);
   getSheetDataAsJSON(ss.getSheetByName("Settings")).forEach(s => {
-    if (rules.hasOwnProperty(s.Key) && s.Value !== "" && !isNaN(Number(s.Value))) rules[s.Key] = Number(s.Value);
+    if (!rules.hasOwnProperty(s.Key) || s.Value === "" || isNaN(Number(s.Value))) return;
+    if (settingInRange(s.Key, Number(s.Value))) rules[s.Key] = Number(s.Value); // นอกช่วง → ใช้ค่าเริ่มต้น
   });
   return rules;
 }
@@ -509,39 +529,74 @@ function updateTask(ss, payload) {
   return { status: "success", message: "อัปเดต Checklist สำเร็จ" };
 }
 
-// เขียนรายชื่อของรอบใหม่ทั้งชุดในครั้งเดียว (เร็วกว่าการ deleteRow ทีละแถว)
+// แก้รายชื่อของรอบแบบ delta: { session_id, add:[{User_ID|NEW_x, DisplayName, Hours_Joined, Timestamp?, Payment_Status?}],
+// remove:[User_ID], update:[{User_ID, Hours_Joined}], session_status? ("Open"|"Cancelled") }
+// แตะเฉพาะคนที่แอดมินแก้ ไม่ทับคนที่ลงชื่อ/ยกเลิกระหว่างที่แอดมินเปิดหน้าแก้ไขค้างไว้
+// ยังรับรูปแบบเก่า { registrations:[...] } (เขียนทับทั้งรอบ) ชั่วคราวระหว่างรอ deploy หน้าเว็บใหม่
 function adminUpdateRegistrations(ss, payload) {
   const sid = String(payload.session_id || "").trim();
+  if (payload.session_status !== undefined) {
+    if (["Open", "Cancelled"].indexOf(payload.session_status) === -1) fail("BAD_INPUT", "สถานะไม่ถูกต้อง");
+    const res = setSessionStatus(ss, sid, payload.session_status, "");
+    if (res.status !== "success") fail("NOT_FOUND", res.message);
+  }
+  if (payload.add === undefined && payload.remove === undefined && payload.update === undefined && payload.registrations === undefined) {
+    return { status: "success", message: "อัปเดตรายชื่อสำเร็จ" };
+  }
+
   const sheet = ss.getSheetByName("Registrations");
   const usersSheet = ss.getSheetByName("Users");
   const values = sheet.getDataRange().getValues();
   const width = values[0].length;
+  const hoursOk = h => WORKDAY_HOURS.indexOf(String(h)) !== -1 ? String(h) : "All";
 
-  const kept = values.slice(1).filter(r => String(r[1]).trim() !== sid);
-  const added = (payload.registrations || []).map(reg => {
-    let uid = String(reg.User_ID || "");
-    if (uid.startsWith("NEW_")) {
-      uid = "U" + Date.now() + Math.floor(Math.random() * 1000);
-      appendByHeaders(usersSheet, {
-        User_ID: uid, DisplayName: safeText(String(reg.DisplayName || "Guest").slice(0, 40)),
-        Skill_Level: "C", Profile_Pic: "", Join_Date: new Date(), Line_UID: ""
-      });
-    }
-    return [
-      reg.Timestamp ? new Date(reg.Timestamp) : new Date(),
-      sid, uid,
-      WORKDAY_HOURS.indexOf(String(reg.Hours_Joined)) !== -1 ? String(reg.Hours_Joined) : "All",
-      false, // ยกเลิกระบบ Walk-in แล้ว
-      reg.Payment_Status || "Unpaid"
-    ];
-  });
+  const newUserId = reg => {
+    const uid = String(reg.User_ID || "");
+    if (!uid.startsWith("NEW_")) return uid;
+    const id = "U" + Date.now() + Math.floor(Math.random() * 1000);
+    appendByHeaders(usersSheet, {
+      User_ID: id, DisplayName: safeText(String(reg.DisplayName || "Guest").slice(0, 40)),
+      Skill_Level: "C", Profile_Pic: "", Join_Date: new Date(), Line_UID: ""
+    });
+    return id;
+  };
+  const toRow = (reg, uid) => [
+    reg.Timestamp ? new Date(reg.Timestamp) : new Date(),
+    sid, uid, hoursOk(reg.Hours_Joined), false, reg.Payment_Status || "Unpaid"
+  ];
 
-  const all = kept.concat(added).map(r => {
+  let rows = values.slice(1);
+  if (payload.registrations !== undefined) {
+    // รูปแบบเก่า: แทนที่ทั้งรอบ
+    rows = rows.filter(r => String(r[1]).trim() !== sid)
+      .concat((payload.registrations || []).map(reg => toRow(reg, newUserId(reg))));
+  } else {
+    const inSession = r => String(r[1]).trim() === sid;
+    const removeIds = (payload.remove || []).map(x => String(x).trim());
+    const updates = {};
+    (payload.update || []).forEach(u => { updates[String(u.User_ID).trim()] = hoursOk(u.Hours_Joined); });
+
+    rows = rows.filter(r => !(inSession(r) && removeIds.indexOf(String(r[2]).trim()) !== -1));
+    rows.forEach(r => {
+      const uid = String(r[2]).trim();
+      if (inSession(r) && updates.hasOwnProperty(uid)) r[3] = updates[uid];
+    });
+    const present = {};
+    rows.forEach(r => { if (inSession(r)) present[String(r[2]).trim()] = true; });
+    (payload.add || []).forEach(reg => {
+      const existing = String(reg.User_ID || "");
+      if (!existing.startsWith("NEW_") && present[existing.trim()]) return; // มีอยู่แล้ว ไม่เพิ่มซ้ำ
+      const uid = newUserId(reg);
+      present[uid] = true;
+      rows.push(toRow(reg, uid));
+    });
+  }
+
+  const all = rows.map(r => {
     const row = r.slice(0, width);
     while (row.length < width) row.push("");
     return row;
   });
-
   if (values.length > 1) sheet.getRange(2, 1, values.length - 1, width).clearContent();
   if (all.length) sheet.getRange(2, 1, all.length, width).setValues(all);
   return { status: "success", message: "อัปเดตรายชื่อสำเร็จ" };
@@ -566,7 +621,20 @@ function adminSaveSetting(ss, payload) {
   const key = String(payload.key || "").trim();
   if (!key) fail("BAD_INPUT", "ไม่มีชื่อ Key");
   if (READONLY_SETTINGS.indexOf(key) !== -1) fail("FORBIDDEN", "ค่านี้แก้ผ่านหน้าเว็บไม่ได้");
-  const value = typeof payload.value === "string" ? safeText(payload.value.trim()) : payload.value;
+  let value = typeof payload.value === "string" ? safeText(payload.value.trim()) : payload.value;
+
+  const lim = SETTING_LIMITS[key];
+  if (lim) {
+    const n = Number(value);
+    if (String(value).trim() === "" || !settingInRange(key, n)) {
+      fail("BAD_INPUT", `ค่าต้องเป็น${lim.int ? "จำนวนเต็ม" : "ตัวเลข"}ระหว่าง ${lim.min}–${lim.max}`);
+    }
+    value = n;
+  } else if (BOOL_SETTINGS.indexOf(key) !== -1) {
+    const v = String(value).trim().toUpperCase();
+    if (v !== "TRUE" && v !== "FALSE") fail("BAD_INPUT", "ค่าต้องเป็น TRUE หรือ FALSE");
+    value = v;
+  }
 
   const sheet = ss.getSheetByName("Settings");
   const keys = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), 1).getValues().map(r => String(r[0]).trim());
@@ -614,12 +682,16 @@ function adminSaveSession(ss, payload) {
   return { status: "success", message: "เพิ่มรอบตีแล้ว (" + newId + ")" };
 }
 
+// ลบทุกแถวที่คอลัมน์ตรงค่า ด้วยการเขียนกลับครั้งเดียว (เร็วกว่า deleteRow ทีละแถว)
 function deleteRowsWhere(sheet, colIndex, value) {
   const data = sheet.getDataRange().getValues();
-  let n = 0;
-  for (let i = data.length - 1; i >= 1; i--) {
-    if (String(data[i][colIndex]).trim() === value) { sheet.deleteRow(i + 1); n++; }
-  }
+  if (data.length <= 1) return 0;
+  const width = data[0].length;
+  const kept = data.slice(1).filter(r => String(r[colIndex]).trim() !== value);
+  const n = data.length - 1 - kept.length;
+  if (n === 0) return 0;
+  sheet.getRange(2, 1, data.length - 1, width).clearContent();
+  if (kept.length) sheet.getRange(2, 1, kept.length, width).setValues(kept);
   return n;
 }
 
@@ -861,11 +933,23 @@ function buildPostText(ss, session, regs, nameById, rules) {
 }
 
 // กันส่งซ้ำ ถ้ารันฟังก์ชันซ้ำในวันเดียวกัน
-function alreadySent(key) {
+// markSent เรียกหลังส่งสำเร็จเท่านั้น ถ้า LINE ตอบไม่ใช่ 200 รอบถัดไปของ trigger จะลองส่งใหม่
+function wasSent(key) {
+  return !!PropertiesService.getScriptProperties().getProperty(key);
+}
+function markSent(key) {
+  PropertiesService.getScriptProperties().setProperty(key, String(Date.now()));
+}
+// ล้างเครื่องหมายที่เก่ากว่า 7 วัน ไม่ให้ Script Properties โตขึ้นเรื่อยๆ
+function pruneSentMarkers() {
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty(key)) return true;
-  props.setProperty(key, "1");
-  return false;
+  const all = props.getProperties();
+  const cutoff = Date.now() - 7 * 86400000;
+  Object.keys(all).forEach(k => {
+    if (!/^(book|post)_/.test(k)) return;
+    const t = Number(all[k]);
+    if (!t || t < cutoff) props.deleteProperty(k); // ค่า "1" แบบเก่าไม่มีเวลา ถือว่าเก่า
+  });
 }
 
 // ทริกเกอร์ทุกวัน 10:00: วันที่มีรอบตี → ส่งข้อความโพสต์กลุ่ม LINE ให้แอดมินคัดลอกไปโพสต์
@@ -879,6 +963,7 @@ function runAdminNotify(kind) {
   ensureSheetsExist(ss);
   const adminIds = getAdminIds(ss);
   if (!adminIds.length) return;
+  pruneSentMarkers();
 
   const rules = getRules(ss);
   const playDayOn = String(getSetting(ss, "NOTIFY_PLAY_DAY")).trim().toUpperCase() !== "FALSE";
@@ -903,7 +988,7 @@ function runAdminNotify(kind) {
       .map(r => ({ userId: String(r.User_ID).trim(), hours: String(r.Hours_Joined || "All") }));
 
     // 1) แจ้งจำนวนคนก่อนวันเล่น เพื่อจองคอร์ด (เฉพาะวันหยุด)
-    if (kind === "book" && session.type === "Weekend" && days === bookDays && !alreadySent(`book_${sid}_${todayKey}`)) {
+    if (kind === "book" && session.type === "Weekend" && days === bookDays && !wasSent(`book_${sid}_${todayKey}`)) {
       const names = regs.map(r => nameById[r.userId] || "?").join(", ") || "-";
       const lastReg = new Date(date.getTime() - rules.WEEKEND_CLOSE_DAYS * 86400000);
       const lines = [
@@ -915,15 +1000,17 @@ function runAdminNotify(kind) {
       if (days > rules.WEEKEND_CLOSE_DAYS) lines.push(`ยังรับลงชื่อได้ถึง ${formatThaiDate(lastReg)}`);
       else if (days === rules.WEEKEND_CLOSE_DAYS) lines.push(`ยังรับลงชื่อได้ถึงสิ้นวันนี้ (${formatThaiDate(lastReg)})`);
       if (regs.length < rules.WEEKEND_MIN_PLAYERS) lines.push("⚠️ ตอนนี้ยังไม่ถึงขั้นต่ำ");
-      pushToLine(adminIds, lines.join("\n"));
+      const bookRes = pushToLine(adminIds, lines.join("\n"));
+      if (bookRes.code === 200) markSent(`book_${sid}_${todayKey}`);
     }
 
     // 2) วันเล่น: ส่งข้อความโพสต์กลุ่ม
-    if (kind === "post" && playDayOn && days === 0 && !alreadySent(`post_${sid}_${todayKey}`)) {
+    if (kind === "post" && playDayOn && days === 0 && !wasSent(`post_${sid}_${todayKey}`)) {
       let post;
       try { post = buildPostText(ss, session, regs, nameById, rules); }
       catch (err) { console.error("buildPostText failed: " + err); return; }
-      pushToLine(adminIds, ["📋 ข้อความสำหรับโพสต์กลุ่ม LINE วันนี้ (คัดลอกข้อความถัดไปได้เลย)", post]);
+      const postRes = pushToLine(adminIds, ["📋 ข้อความสำหรับโพสต์กลุ่ม LINE วันนี้ (คัดลอกข้อความถัดไปได้เลย)", post]);
+      if (postRes.code === 200) markSent(`post_${sid}_${todayKey}`);
     }
   });
 }
