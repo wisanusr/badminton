@@ -19,7 +19,6 @@ function initialSetup() {
 
   ensureColumn(ss.getSheetByName("Users"), "Line_UID");
   ensureColumn(ss.getSheetByName("Sessions"), "Task5"); // เช็คลิสต์ "โอนเงินเข้าบัญชี"
-  ensureColumn(ss.getSheetByName("Sessions"), "Point_URL"); // ลิงก์สแกนเก็บแต้มของรอบ ส่งให้ผู้เล่น 21:00
   ensureSetting(ss, "LINE_CHANNEL_ID", "", "Channel ID ของ LINE Login channel (ใช้ตรวจ ID token)");
   ensureSetting(ss, "ADMIN_LINE_IDS", "", "LINE userId ของแอดมิน คั่นด้วยเครื่องหมาย ,");
   ensureSetting(ss, "NOTIFY_CANCEL", "TRUE", "แจ้งเตือนแอดมินทาง LINE เมื่อมีคนยกเลิกคิว (TRUE/FALSE)");
@@ -32,6 +31,8 @@ function initialSetup() {
   ensureSetting(ss, "SHUTTLECOCK_PRICE", 65, "ราคาลูกแบดต่อลูก (บาท)");
   ensureSetting(ss, "NOTIFY_PLAY_DAY", "TRUE", "แจ้งแอดมินทาง LINE 10:00 ในวันที่มีรอบตี พร้อมข้อความโพสต์กลุ่ม (TRUE/FALSE)");
   ensureSetting(ss, "BOOK_NOTICE_DAYS", 2, "รอบวันหยุด: แจ้งแอดมินจำนวนคนก่อนวันเล่นกี่วัน (เพื่อจองคอร์ด)");
+  ensureSetting(ss, "POINT_CARD_URL", "", "ลิงก์บัตรสะสมแต้มของ LINE OA (ผู้เล่นเห็นหลังระบบเช็กว่าลงชื่อ ว่าง = ไม่ส่งการ์ดแต้ม)");
+  ensureSetting(ss, "POINT_CARD_EXPIRES", "", "วันหมดอายุของลิงก์รับแต้ม yyyy-MM-dd (ถึงวันนี้แจ้งแอดมินให้ใส่ลิงก์ใหม่ ว่าง = ไม่มีวันหมดอายุ)");
   clearDataCache();
 }
 
@@ -134,7 +135,7 @@ function ensureSetting(ss, key, value, desc) {
 //  - checkWeekendQuorum  ทุกวันช่วง 08:00-09:00
 //  - dailyAdminNotify    ทุกวันช่วง 10:00-11:00 (ข้อความโพสต์ในวันเล่น)
 //  - bookCourtNotify     ทุกวันช่วง 12:00-13:00 (แจ้งจำนวนคนรอบวันหยุดเพื่อจองคอร์ด)
-//  - pointReminderNotify ทุกวันช่วง 21:00-22:00 (ส่งลิงก์สแกนเก็บแต้มให้ผู้เล่นรอบที่แอดมินใส่ลิงก์ไว้)
+//  - pointReminderNotify ทุกวันช่วง 21:00-22:00 (ส่งการ์ดรับแต้มให้ผู้ลงชื่อ ถ้าตั้งลิงก์บัตรไว้และบัตรยังไม่หมดอายุ)
 function setupTriggers() {
   const handlers = ["checkWeekendQuorum", "dailyAdminNotify", "bookCourtNotify", "pointReminderNotify"];
   ScriptApp.getProjectTriggers()

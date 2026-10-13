@@ -541,13 +541,16 @@
             SHUTTLES_PER_SESSION: { label: 'จำนวนลูกแบดเริ่มต้น', unit: 'ลูก', type: 'number' },
             NOTIFY_CANCEL:        { label: 'แจ้งเมื่อมีคนยกเลิก', type: 'bool', note: 'ส่งหาแอดมินทาง LINE' },
             NOTIFY_PLAY_DAY:      { label: 'ข้อความแจ้งเตือน 10:00', type: 'bool', note: 'ส่งข้อความโพสต์กลุ่มให้แอดมินตอน 10:00 ของวันเล่น' },
-            BOOK_NOTICE_DAYS:     { label: 'แจ้งจำนวนคนเพื่อจองคอร์ด', unit: 'วัน', type: 'number', note: 'แจ้งแอดมินก่อนวันเล่นกี่วัน (เฉพาะรอบวันหยุด)' }
+            BOOK_NOTICE_DAYS:     { label: 'แจ้งจำนวนคนเพื่อจองคอร์ด', unit: 'วัน', type: 'number', note: 'แจ้งแอดมินก่อนวันเล่นกี่วัน (เฉพาะรอบวันหยุด)' },
+            POINT_CARD_URL:       { label: 'ลิงก์รับแต้ม', type: 'text', hint: 'https://...', note: 'ลิงก์บัตรสะสมแต้มจาก LINE OA ใช้ลิงก์เดียวกับทุกรอบ ผู้เล่นที่ลงชื่อจะได้การ์ดตอน 21:00 กดรับได้ภายใน 24 ชั่วโมง ระบบเช็กสิทธิ์ก่อนเปิดลิงก์ ว่าง = ไม่ส่งการ์ด' },
+            POINT_CARD_EXPIRES:   { label: 'วันหมดอายุของลิงก์', type: 'date', note: 'ถึงวันนี้ระบบแจ้งแอดมินให้ใส่ลิงก์ใหม่ ผ่านวันนี้ไปแล้วผู้เล่นจะไม่ได้รับการ์ดและกดรับแต้มไม่ได้ ว่าง = ไม่มีวันหมดอายุ' }
         };
         const SETTING_GROUPS = [
             { title: 'วันธรรมดา', keys: ['WORKDAY_HOUR_CAP', 'WORKDAY_MIN_PLAYERS'] },
             { title: 'วันหยุด', keys: ['WEEKEND_MIN_PLAYERS', 'WEEKEND_CLOSE_DAYS'] },
             { title: 'ค่าใช้จ่าย', keys: ['COST_SPLIT_BASE', 'SHUTTLECOCK_PRICE', 'SHUTTLES_PER_SESSION'] },
-            { title: 'การแจ้งเตือนแอดมิน', keys: ['NOTIFY_CANCEL', 'NOTIFY_PLAY_DAY', 'BOOK_NOTICE_DAYS'] }
+            { title: 'การแจ้งเตือนแอดมิน', keys: ['NOTIFY_CANCEL', 'NOTIFY_PLAY_DAY', 'BOOK_NOTICE_DAYS'] },
+            { title: 'บัตรสะสมแต้ม', keys: ['POINT_CARD_URL', 'POINT_CARD_EXPIRES'] }
         ];
         const HIDDEN_SETTING_KEYS = ['ADMIN_LINE_IDS', 'LINE_CHANNEL_ID', 'LINE_POST_TEMPLATE'];
         const SAMPLE_TPL_VARS = {
@@ -692,12 +695,11 @@
 
             const newSession = () => {
                 const loc = locationOptions[0] || '';
-                setEditor({ kind: 'session', data: { Session_ID: '', date: toInputDate(new Date()), location: loc, customLoc: !loc, status: 'Open', cost: loc && lastCostAt(loc) !== null ? lastCostAt(loc) : 200, pointUrl: '' } });
+                setEditor({ kind: 'session', data: { Session_ID: '', date: toInputDate(new Date()), location: loc, customLoc: !loc, status: 'Open', cost: loc && lastCostAt(loc) !== null ? lastCostAt(loc) : 200 } });
             };
             const editSession = s => setEditor({ kind: 'session', data: {
                 Session_ID: s.Session_ID, date: toInputDate(s.Date),
-                location: s.Location || '', customLoc: !!s.Location && !locationOptions.includes(String(s.Location).trim()), status: s.Status || 'Open', cost: s.Cost === '' ? 0 : s.Cost,
-                pointUrl: s.Point_URL !== undefined ? String(s.Point_URL) : null } }); // null = ยังโหลดประวัติไม่เสร็จ (ไม่รู้ลิงก์เดิม) จะไม่ส่งไปทับ
+                location: s.Location || '', customLoc: !!s.Location && !locationOptions.includes(String(s.Location).trim()), status: s.Status || 'Open', cost: s.Cost === '' ? 0 : s.Cost } });
             const pickLocation = v => {
                 if (v === OTHER_LOCATION) return setData({ customLoc: true, location: '' });
                 const patch = { customLoc: false, location: v };
@@ -706,8 +708,7 @@
             };
             const saveSession = async () => {
                 const d = editor.data;
-                const ok = await call('adminSaveSession', { session_id: d.Session_ID, date: d.date, location: d.location.trim(), status: d.status, cost: d.cost,
-                    ...(d.pointUrl !== null && d.pointUrl !== undefined ? { point_url: d.pointUrl.trim() } : {}) });
+                const ok = await call('adminSaveSession', { session_id: d.Session_ID, date: d.date, location: d.location.trim(), status: d.status, cost: d.cost });
                 if (ok) setEditor(null);
             };
             const deleteSession = async () => {
@@ -1000,7 +1001,7 @@
                                                     )}
                                                 </div>
                                                 {wide && (
-                                                    <input value={val} onChange={e => edit(e.target.value)} placeholder={meta.hint || ''} className={`${FIELD} mt-2 font-mono text-[14px]`} />
+                                                    <input type={meta.type === 'date' ? 'date' : 'text'} value={val} onChange={e => edit(e.target.value)} placeholder={meta.hint || ''} className={`${FIELD} mt-2 ${meta.type === 'date' ? '' : 'font-mono text-[14px]'}`} />
                                                 )}
                                                 {meta.note && <div className="text-[12px] text-gray-500 mt-1.5">{meta.note}</div>}
                                             </div>
@@ -1041,10 +1042,6 @@
                                 </select>
                             </AdminField>
                             <AdminField label="ค่าคอร์ด (บาท)"><input type="number" inputMode="numeric" value={editor.data.cost} onChange={e => setData({ cost: e.target.value })} className={FIELD} /></AdminField>
-                            <AdminField label="ลิงก์สแกนเก็บแต้ม (ส่งให้ผู้ลงชื่อ 21:00 วันเล่น ว่าง = ไม่ส่ง)">
-                                <input type="url" inputMode="url" placeholder={editor.data.pointUrl === null ? 'กำลังโหลด...' : 'https://...'} disabled={editor.data.pointUrl === null}
-                                    value={editor.data.pointUrl || ''} onChange={e => setData({ pointUrl: e.target.value })} className={FIELD} />
-                            </AdminField>
                         </AdminSheet>
                     )}
 
@@ -1075,6 +1072,14 @@
             );
         }
 
+        // รหัสรอบจากลิงก์ในการ์ดแต้ม (?claim=S074) LIFF อาจส่งมาในรูป liff.state=?claim=S074 จึงอ่านทั้งสองแบบ
+        const readClaimParam = () => {
+            const p = new URLSearchParams(window.location.search);
+            let sid = p.get('claim');
+            if (!sid && p.get('liff.state')) sid = new URLSearchParams(p.get('liff.state').replace(/^\/?\??/, '')).get('claim');
+            return sid ? { sid, status: 'wait', message: '', url: '' } : null;
+        };
+
         // ===================== App =====================
         function BadmintonApp() {
             // ---- data ----
@@ -1096,6 +1101,7 @@
             // ---- ui ----
             const [loading, setLoading] = useState(true);
             const [globalError, setGlobalError] = useState(null);
+            const [claim, setClaim] = useState(readClaimParam);   // ผู้เล่นกดการ์ดแต้ม: เช็กสิทธิ์แล้วค่อยเปิดลิงก์แต้มจริง
             const [submitting, setSubmitting] = useState(false);
             const [toast, setToast] = useState({ message: '', type: '' });
             const [newUserName, setNewUserName] = useState("");
@@ -1110,7 +1116,6 @@
             const [showCancelConfirm, setShowCancelConfirm] = useState(false);
             const [selectedHour, setSelectedHour] = useState("All");
             const [extraShuttles, setExtraShuttles] = useState(0);
-            const [pointUrl, setPointUrl] = useState('');
             const [pendingTasks, setPendingTasks] = useState({});
             const [lineText, setLineText] = useState("");
             const [copied, setCopied] = useState(false);
@@ -1270,6 +1275,29 @@
                 })();
             }, []);
 
+            // ---------- รับแต้ม: ตรวจว่าคนกดลงชื่ออยู่ในรอบนั้น (ฝั่ง server) แล้วค่อยพาไปลิงก์แต้มจริง ----------
+            useEffect(() => {
+                if (!claim || claim.status !== 'wait' || !currentUser) return;
+                setClaim(c => ({ ...c, status: 'checking' }));
+                (async () => {
+                    try {
+                        const r = await sendApiRequest('claimPoint', { session_id: claim.sid });
+                        if (r.status === 'success') {
+                            setClaim(c => ({ ...c, status: 'done', url: r.data.url }));
+                            window.location.href = r.data.url;
+                        } else {
+                            setClaim(c => ({ ...c, status: 'error', message: r.message || 'เปิดลิงก์รับแต้มไม่ได้' }));
+                        }
+                    } catch (e) {
+                        setClaim(c => ({ ...c, status: 'error', message: e.message }));
+                    }
+                })();
+            }, [currentUser, claim && claim.status]);
+            const leaveClaim = () => {
+                try { window.history.replaceState(null, '', window.location.pathname); } catch (e) {}
+                setClaim(null);
+            };
+
             // ---------- derived ----------
             const rules = useMemo(() => readRules(serverRules, appSettings), [serverRules, appSettings]);
             const myId = currentUser ? String(currentUser.User_ID) : '';
@@ -1339,7 +1367,6 @@
             useEffect(() => {
                 setPendingTasks({});
                 setIsEditing(false);
-                setPointUrl('');
             }, [selectedId]);
 
             useEffect(() => {
@@ -1428,14 +1455,6 @@
             const handleSaveExtraShuttles = () => runAction('updateTask', {
                 session_id: selectedSession.Session_ID, task_key: 'Extra_Shuttles', task_value: extraShuttles
             }, 'บันทึกจำนวนลูกแล้ว');
-
-            const handleSavePointUrl = async () => {
-                const url = pointUrl.trim();
-                if (url && !/^https:\/\/\S+$/.test(url)) return showToast('ลิงก์ต้องขึ้นต้นด้วย https://', 'error');
-                const ok = await runAction('updateTask', { session_id: selectedSession.Session_ID, task_key: 'Point_URL', task_value: url },
-                    url ? 'บันทึกลิงก์แล้ว จะส่งให้ผู้เล่น 21:00' : 'ล้างลิงก์แล้ว');
-                if (ok) setPointUrl('');
-            };
 
             const handleTaskToggleLocal = (key) => {
                 setPendingTasks(prev => {
@@ -1569,6 +1588,39 @@
             }
 
             if (publicViewMode) return <PublicSessionView sessionInfos={sessionInfos} rules={rules} />;
+
+            // ---------- หน้ารับแต้ม (เข้ามาจากการ์ด 21:00) ----------
+            if (claim && currentUser) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-6 text-center">
+                        <div className="bg-white p-8 rounded-[24px] shadow-sm max-w-sm w-full">
+                            {claim.status === 'error' ? (
+                                <>
+                                    <div className="text-rose-500 mb-4 flex justify-center"><IconShield size={44} /></div>
+                                    <h2 className="text-xl font-bold mb-2 text-black">เปิดลิงก์รับแต้มไม่ได้</h2>
+                                    <p className="text-gray-600 mb-6 text-[15px]">{claim.message}</p>
+                                    <button onClick={leaveClaim} className="w-full bg-[#007AFF] text-white py-3 rounded-[14px] font-semibold active:opacity-80">เปิดแอป</button>
+                                </>
+                            ) : (
+                                <>
+                                    <span className="text-5xl block mb-4">🏸</span>
+                                    {claim.status === 'done' ? (
+                                        <>
+                                            <p className="text-[15px] text-gray-600 mb-5">กำลังเปิดลิงก์รับแต้ม...</p>
+                                            <a href={claim.url} className="block w-full bg-[#34C759] text-white py-3 rounded-[14px] font-semibold active:opacity-80">เปิดลิงก์รับแต้ม</a>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <IconLoader className="text-gray-400 mx-auto mb-3" />
+                                            <p className="text-[15px] text-gray-500">กำลังตรวจสอบสิทธิ์รับแต้ม...</p>
+                                        </>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
 
             // ---------- ตั้งค่าโปรไฟล์ครั้งแรก ----------
             if (!currentUser) {
@@ -1858,27 +1910,6 @@
                                         </div>
                                     )}
                                 </>
-                            )}
-
-                            {/* ลิงก์สแกนเก็บแต้ม: ส่งให้ผู้เล่นที่ลงชื่อ 21:00 วันเล่น */}
-                            {isAdminUser && !si.isCancelled && (
-                                <div className="mb-8">
-                                    <SectionTitle>ลิงก์สแกนเก็บแต้ม</SectionTitle>
-                                    <div className="bg-white rounded-[20px] overflow-hidden shadow-sm p-4">
-                                        <div className="text-[13px] text-gray-500 mb-2">
-                                            {s.Has_Point_URL ? '✅ ตั้งลิงก์แล้ว จะส่งให้ผู้ลงชื่อ 21:00 วันเล่น' : 'ยังไม่ได้ตั้ง (ไม่ตั้ง = ไม่ส่งข้อความ)'}
-                                        </div>
-                                        <input type="url" inputMode="url" value={pointUrl} onChange={e => setPointUrl(e.target.value)}
-                                            placeholder={s.Has_Point_URL ? 'วางลิงก์ใหม่เพื่อแทนที่ (ว่าง = ล้าง)' : 'วางลิงก์ https://...'}
-                                            className={FIELD} />
-                                        {(pointUrl.trim() !== '' || s.Has_Point_URL) && (
-                                            <button onClick={handleSavePointUrl} disabled={submitting}
-                                                className="mt-3 w-full bg-[#007AFF] text-white font-semibold py-3 rounded-[14px] active:opacity-80 disabled:opacity-50">
-                                                {pointUrl.trim() === '' ? 'ล้างลิงก์' : 'บันทึกลิงก์'}
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
                             )}
 
                             {/* Admin checklist */}

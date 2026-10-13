@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const assert = require('assert');
-const { mkSheet, mkWorld } = require('./mock-sheets');
+const { mkSheet, mkWorld, formatDate } = require('./mock-sheets');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -38,7 +38,7 @@ function fixture() {
     Users: mkSheet([['User_ID', 'DisplayName', 'Skill_Level', 'Profile_Pic', 'Join_Date', 'Line_UID'],
       ['U1', 'Alice', 'C', '', '', 'Ua'], ['U2', 'Bob', 'C', '', '', 'Ub'],
       ['U3', 'Carol', 'C', '', '', ''], ['U4', 'Admin', 'C', '', '', 'Uadmin']]),
-    Sessions: mkSheet([['Session_ID', 'Date', 'Type', 'Location', 'Status', 'Cost', 'Calculated_Price_Per_Head', 'Task1', 'Task2', 'Task3', 'Task4', 'Task5', 'Point_URL'],
+    Sessions: mkSheet([['Session_ID', 'Date', 'Type', 'Location', 'Status', 'Cost', 'Calculated_Price_Per_Head', 'Task1', 'Task2', 'Task3', 'Task4', 'Task5'],
       ['S1', inDays(1), 'Workday', 'Court A', 'Open', 200],   // workday tomorrow, 18-19 already full (8)
       ['S2', inDays(1), 'Weekend', 'Court B', 'Open', 240],   // weekend tomorrow -> registration closed (<2 days)
       ['S3', inDays(10), 'Weekend', 'Court B', 'Open', 240],  // weekend in 10 days -> open
@@ -331,69 +331,6 @@ test('notifications: sent markers older than 7 days are pruned', ({ G, world }) 
   assert(world.props.has('post_S1_new') && world.props.has('LINE_MESSAGING_TOKEN'));
 });
 
-test('updateTask: Point_URL accepts https or empty, rejects anything else', ({ G, sheets }) => {
-  const h = G('handleRequest');
-  const col = sheets.Sessions.rows[0].indexOf('Point_URL');
-  h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: ' https://lin.ee/abc ' }, 'tokAdmin');
-  assert.strictEqual(sheets.Sessions.rows[3][col], 'https://lin.ee/abc');
-  expectCode(() => h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: 'javascript:alert(1)' }, 'tokAdmin'), 'BAD_INPUT');
-  expectCode(() => h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: '=HYPERLINK("x")' }, 'tokAdmin'), 'BAD_INPUT');
-  h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: '' }, 'tokAdmin');
-  assert.strictEqual(sheets.Sessions.rows[3][col], '');
-  expectCode(() => h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: 'https://x.y' }, 'tokA'), 'FORBIDDEN');
-});
-
-test('getAllData: Point_URL is never sent, only Has_Point_URL', ({ G, sheets }) => {
-  const col = sheets.Sessions.rows[0].indexOf('Point_URL');
-  sheets.Sessions.rows[3][col] = 'https://lin.ee/secret';
-  G('clearDataCache')();
-  const d = G('handleRequest')('getAllData', {}, null).data;
-  const s3 = d.sessions.find(s => s.Session_ID === 'S3');
-  assert.strictEqual(s3.Has_Point_URL, true);
-  assert(!('Point_URL' in s3) && !JSON.stringify(d).includes('lin.ee/secret'));
-  assert.strictEqual(d.sessions.find(s => s.Session_ID === 'S2').Has_Point_URL, false);
-});
-
-test('pointReminderNotify: only today sessions with a link, linked players once, retried until LINE accepts', ({ G, world, sheets }) => {
-  const sent = [];
-  let status = 500;
-  world.globals.UrlFetchApp.fetch = (url, opts) => {
-    sent.push(JSON.parse(opts.payload));
-    return { getResponseCode: () => status, getContentText: () => '{}' };
-  };
-  world.props.set('LINE_MESSAGING_TOKEN', 't');
-  const link = 'https://lin.ee/pt';
-  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200, '', '', '', '', '', '', link]);   // today + link
-  sheets.Sessions.rows.push(['T2', inDays(0), 'Workday', 'B', 'Open', 200, '', '', '', '', '', '', '']);     // today, no link
-  sheets.Sessions.rows.push(['T3', inDays(1), 'Workday', 'C', 'Open', 200, '', '', '', '', '', '', link]);   // tomorrow
-  sheets.Sessions.rows.push(['T4', inDays(0), 'Workday', 'D', 'Cancelled', 200, '', '', '', '', '', '', link]); // cancelled
-  ['T1', 'T2', 'T3', 'T4'].forEach(sid => ['U1', 'U3', 'U2'].forEach(u => sheets.Registrations.appendRow([1, sid, u, 'All', false, 'Unpaid'])));
-  G('pointReminderNotify')();
-  assert.strictEqual(sent.length, 1, 'one multicast for T1 only');
-  assert.deepStrictEqual(sent[0].to.sort(), ['Ua', 'Ub'], 'U3 has no LINE id');
-  assert(sent[0].messages[0].text.includes(link));
-  status = 200;
-  G('pointReminderNotify')();   // first send failed -> retried
-  assert.strictEqual(sent.length, 2);
-  G('pointReminderNotify')();   // now marked -> not sent again
-  assert.strictEqual(sent.length, 2);
-});
-
-test('adminSaveSession: point_url saved, cleared, left alone when omitted, validated', ({ G, sheets }) => {
-  const h = G('handleRequest');
-  const base = { session_id: 'S3', date: '2030-01-05', type: 'Weekend', location: 'Court B', status: 'Open', cost: 240 };
-  const col = () => sheets.Sessions.rows[0].indexOf('Point_URL');
-  h('adminSaveSession', { ...base, point_url: 'https://lin.ee/a' }, 'tokAdmin');
-  assert.strictEqual(sheets.Sessions.rows[3][col()], 'https://lin.ee/a');
-  h('adminSaveSession', { ...base, cost: 250 }, 'tokAdmin'); // history not loaded yet in the UI -> field omitted
-  assert.strictEqual(sheets.Sessions.rows[3][col()], 'https://lin.ee/a', 'omitted point_url keeps the existing link');
-  expectCode(() => h('adminSaveSession', { ...base, point_url: 'http://insecure' }, 'tokAdmin'), 'BAD_INPUT');
-  h('adminSaveSession', { ...base, point_url: '' }, 'tokAdmin');
-  assert.strictEqual(sheets.Sessions.rows[3][col()], '');
-  h('adminSaveSession', { date: '2030-02-02', type: 'Workday', location: 'New', status: 'Open', cost: 200, point_url: 'https://lin.ee/n' }, 'tokAdmin');
-  assert.strictEqual(sheets.Sessions.rows[sheets.Sessions.rows.length - 1][col()], 'https://lin.ee/n');
-});
-
 test('adminSaveSession: type is derived from the date (Sat/Sun = Weekend)', ({ G, sheets }) => {
   const h = G('handleRequest');
   const add = date => {
@@ -423,6 +360,248 @@ test('adminMergeUsers: keeps the old id, takes the LINE link + registrations, sk
   assert.strictEqual(regCount('U1'), 0);
   assert.strictEqual(regCount('U3'), before - 1, 'S3 duplicate dropped, others moved');
   assert.strictEqual(sheets.Registrations.rows.slice(1).filter(r => r[1] === 'S3' && r[2] === 'U3').length, 1);
+});
+
+// ---------- LINE notification cards ----------
+function capturePushes(world, failFlex) {
+  const sent = [];
+  const verify = world.verifyFetch || (world.verifyFetch = world.globals.UrlFetchApp.fetch); // id-token verification still goes through the original mock
+  world.globals.UrlFetchApp.fetch = (url, opts) => {
+    if (typeof opts.payload !== 'string') return verify(url, opts);
+    const body = JSON.parse(opts.payload);
+    sent.push(body);
+    return { getResponseCode: () => sent.status || (failFlex && body.messages[0].type === 'flex' ? 400 : 200), getContentText: () => '{}' };
+  };
+  world.props.set('LINE_MESSAGING_TOKEN', 't');
+  return sent;
+}
+const cardTexts = card => JSON.stringify(card.contents);
+
+test('notify: cancelling a seat sends the admins a card (text fallback when LINE rejects cards)', ({ G, world }) => {
+  const sent = capturePushes(world);
+  const h = G('handleRequest');
+  h('register', { session_id: 'S3' }, 'tokA');
+  h('cancel', { session_id: 'S3' }, 'tokA');
+  assert.strictEqual(sent.length, 1);
+  assert.deepStrictEqual(sent[0].to, ['Uadmin']);
+  const card = sent[0].messages[0];
+  assert.strictEqual(card.type, 'flex');
+  assert(cardTexts(card).includes('มีคนยกเลิกคิว') && cardTexts(card).includes('Alice'));
+  assert(card.altText.includes('Alice'));
+
+  const w2 = capturePushes(world, true);
+  h('register', { session_id: 'S3' }, 'tokA');
+  h('cancel', { session_id: 'S3' }, 'tokA');
+  assert.deepStrictEqual(w2.map(b => b.messages[0].type), ['flex', 'text']);
+  assert(w2[1].messages[0].text.includes('Alice'));
+});
+
+test('notify: book-court notice to admins is a card with the player count and names', ({ G, world, sheets }) => {
+  const sent = capturePushes(world);
+  sheets.Settings.rows.push(['BOOK_NOTICE_DAYS', 1, '']);
+  sheets.Registrations.appendRow([1, 'S2', 'U1', 'All', false, 'Unpaid']);
+  G('bookCourtNotify')();
+  assert.strictEqual(sent.length, 1);
+  const txt = cardTexts(sent[0].messages[0]);
+  assert(txt.includes('แจ้งจองคอร์ด') && txt.includes('Alice') && txt.includes('ยังไม่ถึงขั้นต่ำ'));
+  G('bookCourtNotify')();
+  assert.strictEqual(sent.length, 1, 'only once per day');
+});
+
+test('notify: weekend short of players cancels, players get a card, admins get a card listing who to tell', ({ G, world, sheets }) => {
+  const sent = capturePushes(world);
+  ['U1', 'U2', 'U3'].forEach(u => sheets.Registrations.appendRow([1, 'S2', u, 'All', false, 'Unpaid'])); // 3 < 6, Carol has no LINE
+  G('checkWeekendQuorum')();
+  assert.strictEqual(sheets.Sessions.rows[2][4], 'Cancelled');
+  const toPlayers = sent.find(b => b.to.includes('Ua'));
+  assert.deepStrictEqual(toPlayers.to.sort(), ['Ua', 'Ub']);
+  assert(cardTexts(toPlayers.messages[0]).includes('งดตีรอบวันหยุด'));
+  const toAdmin = sent.find(b => b.to.includes('Uadmin'));
+  const txt = cardTexts(toAdmin.messages[0]);
+  assert(txt.includes('งดรอบอัตโนมัติ') && txt.includes('Carol'), 'admin is told who to notify by hand');
+});
+
+test('notify: weekend with enough players tells the admins in plain text that the round goes ahead', ({ G, world, sheets }) => {
+  const sent = capturePushes(world);
+  for (let i = 0; i < 6; i++) sheets.Registrations.appendRow([1, 'S2', 'X' + i, 'All', false, 'Unpaid']);
+  G('checkWeekendQuorum')();
+  assert.strictEqual(sheets.Sessions.rows[2][4], 'Open');
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].messages[0].type, 'text', 'plain text, not a card');
+  assert(sent[0].messages[0].text.includes('ได้ไปต่อ'));
+});
+
+const CARD = 'https://lin.ee/real-card';
+// initialSetup may already have added the (empty) keys; getSetting reads the first row of a key, so update in place
+const setSheetSetting = (sheets, key, value) => {
+  const row = sheets.Settings.rows.find(r => r[0] === key);
+  if (row) row[1] = value; else sheets.Settings.rows.push([key, value, '']);
+};
+const setCard = (sheets, url, expires) => { setSheetSetting(sheets, 'POINT_CARD_URL', url); setSheetSetting(sheets, 'POINT_CARD_EXPIRES', expires || ''); };
+const dayStr = n => formatDate(new Date(Date.now() + n * DAY + 6 * 3600000), 'Asia/Bangkok', 'yyyy-MM-dd');
+
+test('settings: card link must be https or empty, expiry a real date; admin sees them, the public payload does not', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  expectCode(() => h('adminSaveSetting', { key: 'POINT_CARD_URL', value: 'http://insecure' }, 'tokAdmin'), 'BAD_INPUT');
+  expectCode(() => h('adminSaveSetting', { key: 'POINT_CARD_URL', value: 'javascript:alert(1)' }, 'tokAdmin'), 'BAD_INPUT');
+  expectCode(() => h('adminSaveSetting', { key: 'POINT_CARD_EXPIRES', value: '31/12/2026' }, 'tokAdmin'), 'BAD_INPUT');
+  expectCode(() => h('adminSaveSetting', { key: 'POINT_CARD_EXPIRES', value: '2026-02-31' }, 'tokAdmin'), 'BAD_INPUT');
+  expectCode(() => h('adminSaveSetting', { key: 'POINT_CARD_URL', value: CARD }, 'tokA'), 'FORBIDDEN');
+  h('adminSaveSetting', { key: 'POINT_CARD_URL', value: ' ' + CARD + ' ' }, 'tokAdmin'); // key not in the sheet yet: created
+  h('adminSaveSetting', { key: 'POINT_CARD_EXPIRES', value: '2026-12-31' }, 'tokAdmin');
+  const rows = h('adminGetSettings', {}, 'tokAdmin').data;
+  assert.strictEqual(rows.find(r => r.Key === 'POINT_CARD_URL').Value, CARD);
+  assert.strictEqual(rows.find(r => r.Key === 'POINT_CARD_EXPIRES').Value, '2026-12-31');
+  const pub = h('getAllData', {}, null).data;
+  assert(!JSON.stringify(pub).includes('real-card') && !('POINT_CARD_URL' in pub.settings) && !('POINT_CARD_EXPIRES' in pub.settings));
+  h('adminSaveSetting', { key: 'POINT_CARD_EXPIRES', value: '' }, 'tokAdmin');
+  assert.strictEqual(h('adminGetSettings', {}, 'tokAdmin').data.find(r => r.Key === 'POINT_CARD_EXPIRES').Value, '');
+});
+
+test('pointReminderNotify: needs the card link; today sessions only; linked players once; retried until LINE accepts', ({ G, world, sheets }) => {
+  const sent = capturePushes(world);
+  sent.status = 500;
+  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);        // today
+  sheets.Sessions.rows.push(['T3', inDays(1), 'Workday', 'C', 'Open', 200]);        // tomorrow
+  sheets.Sessions.rows.push(['T4', inDays(0), 'Workday', 'D', 'Cancelled', 200]);   // cancelled
+  ['T1', 'T3', 'T4'].forEach(sid => ['U1', 'U3', 'U2'].forEach(u => sheets.Registrations.appendRow([1, sid, u, 'All', false, 'Unpaid'])));
+
+  G('pointReminderNotify')();
+  assert.strictEqual(sent.length, 0, 'no card link set -> nothing sent');
+
+  setCard(sheets, CARD);
+  G('_settingsMap = null');   // a real execution re-reads Settings
+  G('pointReminderNotify')();
+  assert.strictEqual(sent.length, 1, 'one multicast for T1 only');
+  assert.deepStrictEqual(sent[0].to.sort(), ['Ua', 'Ub'], 'U3 has no LINE id');
+  const card = sent[0].messages[0];
+  assert.strictEqual(card.type, 'flex');
+  const gate = G('LIFF_URL') + '?claim=T1';
+  assert.strictEqual(card.contents.footer.contents[0].action.uri, gate, 'button goes through the app, not straight to the card link');
+  assert(card.altText.includes(gate));
+  assert(!JSON.stringify(sent).includes('real-card'), 'the real card link is never put in a LINE message');
+  sent.status = 200;
+  G('pointReminderNotify')();   // first send failed -> retried
+  assert.strictEqual(sent.length, 2);
+  G('pointReminderNotify')();   // now marked -> not sent again
+  assert.strictEqual(sent.length, 2);
+});
+
+test('pointReminderNotify: falls back to plain text when LINE rejects the card (400)', ({ G, world, sheets }) => {
+  const sent = capturePushes(world, true);
+  setCard(sheets, CARD);
+  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);
+  sheets.Registrations.appendRow([1, 'T1', 'U1', 'All', false, 'Unpaid']);
+  G('pointReminderNotify')();
+  assert.deepStrictEqual(sent.map(b => b.messages[0].type), ['flex', 'text']);
+  assert(sent[1].messages[0].text.includes(G('LIFF_URL') + '?claim=T1'));
+  assert(!sent[1].messages[0].text.includes('lin.ee'));
+  G('pointReminderNotify')();
+  assert.strictEqual(sent.length, 2, 'fallback counted as sent');
+});
+
+test('pointReminderNotify: sent on the expiry day (last valid day), not after', ({ G, world, sheets }) => {
+  const sent = capturePushes(world);
+  setCard(sheets, CARD, dayStr(0));
+  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);
+  sheets.Registrations.appendRow([1, 'T1', 'U1', 'All', false, 'Unpaid']);
+  G('pointReminderNotify')();
+  assert.strictEqual(sent.length, 1);
+
+  [...world.props.keys()].filter(k => k.startsWith('point_')).forEach(k => world.props.delete(k));
+  sheets.Settings.rows.find(r => r[0] === 'POINT_CARD_EXPIRES')[1] = dayStr(-1);   // expired yesterday
+  G('_settingsMap = null');   // a real execution re-reads Settings
+  G('pointReminderNotify')();
+  assert.strictEqual(sent.length, 1, 'expired -> nothing more is sent');
+});
+
+test('claimPoint: card link only for registered players, within 24h of receiving the card, before the link expires', ({ G, world, sheets }) => {
+  const h = G('handleRequest');
+  setCard(sheets, CARD, dayStr(5));
+  const hoursAgo = n => String(Date.now() - n * 3600000);
+  const sentKey = (sid, offset) => `point_${sid}_${dayStr(offset).replace(/-/g, '')}`;
+  const add = (sid, offset, status) => sheets.Sessions.rows.push([sid, inDays(offset), 'Workday', 'A', status, 200]);
+  add('C1', 0, 'Open');        // card sent 1h ago, Alice registered
+  add('C2', 0, 'Open');        // card sent, Alice NOT registered
+  add('C3', -1, 'Open');       // yesterday, card sent 20h ago -> still inside 24h
+  add('C4', 0, 'Cancelled');   // cancelled
+  add('C5', -2, 'Open');       // card sent 30h ago -> too late
+  add('C6', 0, 'Open');        // registered but the card was never sent
+  ['C1', 'C3', 'C4', 'C5', 'C6'].forEach(sid => sheets.Registrations.appendRow([1, sid, 'U1', 'All', false, 'Unpaid']));
+  world.props.set(sentKey('C1', 0), hoursAgo(1));
+  world.props.set(sentKey('C2', 0), hoursAgo(1));
+  world.props.set(sentKey('C3', -1), hoursAgo(20));
+  world.props.set(sentKey('C4', 0), hoursAgo(1));
+  world.props.set(sentKey('C5', -2), hoursAgo(30));
+
+  assert.strictEqual(h('claimPoint', { session_id: 'C1' }, 'tokA').data.url, CARD);
+  assert.strictEqual(h('claimPoint', { session_id: 'C3' }, 'tokA').data.url, CARD, 'a day later but within 24h of receiving the card');
+  expectCode(() => h('claimPoint', { session_id: 'C2' }, 'tokA'), 'NOT_REGISTERED');
+  expectCode(() => h('claimPoint', { session_id: 'C4' }, 'tokA'), 'CANCELLED');
+  expectCode(() => h('claimPoint', { session_id: 'C5' }, 'tokA'), 'CLAIM_EXPIRED');
+  expectCode(() => h('claimPoint', { session_id: 'C6' }, 'tokA'), 'NOT_SENT');
+  expectCode(() => h('claimPoint', { session_id: 'nope' }, 'tokA'), 'NOT_FOUND');
+  expectCode(() => h('claimPoint', { session_id: 'C1' }, 'tokNew'), 'NO_PROFILE');
+  expectCode(() => h('claimPoint', { session_id: 'C1' }, null), 'AUTH_REQUIRED');
+  ['C2', 'C5', 'C6'].forEach(sid => assert.strictEqual(h('claimPoint', { session_id: sid }, 'tokAdmin').data.url, CARD, 'admins can open the link to test'));
+});
+
+test('claimPoint: the 24h window starts when pointReminderNotify really sent the card', ({ G, world, sheets }) => {
+  capturePushes(world);
+  setCard(sheets, CARD);
+  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);
+  sheets.Registrations.appendRow([1, 'T1', 'U1', 'All', false, 'Unpaid']);
+  expectCode(() => G('handleRequest')('claimPoint', { session_id: 'T1' }, 'tokA'), 'NOT_SENT');
+  G('pointReminderNotify')();
+  assert.strictEqual(G('handleRequest')('claimPoint', { session_id: 'T1' }, 'tokA').data.url, CARD);
+});
+
+test('claimPoint: refused after the link expired (players), and when no link is set', ({ G, world, sheets }) => {
+  const h = G('handleRequest');
+  sheets.Sessions.rows.push(['C1', inDays(0), 'Workday', 'A', 'Open', 200]);
+  sheets.Registrations.appendRow([1, 'C1', 'U1', 'All', false, 'Unpaid']);
+  world.props.set(`point_C1_${dayStr(0).replace(/-/g, '')}`, String(Date.now() - 3600000));
+  expectCode(() => h('claimPoint', { session_id: 'C1' }, 'tokA'), 'NO_LINK');
+  setCard(sheets, CARD, dayStr(-1));
+  G('_settingsMap = null');
+  expectCode(() => h('claimPoint', { session_id: 'C1' }, 'tokA'), 'EXPIRED');
+  assert.strictEqual(h('claimPoint', { session_id: 'C1' }, 'tokAdmin').data.url, CARD, 'admin can still test');
+});
+
+test('pointExpiryNotify: tells admins on the expiry day, then again only on play days, once per day', ({ G, world, sheets }) => {
+  const sent = capturePushes(world);
+  const exp = () => sheets.Settings.rows.find(r => r[0] === 'POINT_CARD_EXPIRES');
+  const rerun = () => { G('_settingsMap = null'); G('pointExpiryNotify')(); };
+  const clearMarkers = () => [...world.props.keys()].filter(k => k.startsWith('pexp_')).forEach(k => world.props.delete(k));
+  const text = i => JSON.stringify(sent[i].messages[0]);
+
+  setCard(sheets, CARD, dayStr(1));                      // expires tomorrow -> nothing yet
+  rerun();
+  assert.strictEqual(sent.length, 0);
+
+  exp()[1] = dayStr(0);                                  // expires today
+  rerun();
+  assert.strictEqual(sent.length, 1);
+  assert.deepStrictEqual(sent[0].to, ['Uadmin']);
+  assert(text(0).includes('หมดอายุวันนี้'));
+  rerun();
+  assert.strictEqual(sent.length, 1, 'once per day');
+
+  clearMarkers(); exp()[1] = dayStr(-2);                 // expired, no session today -> quiet
+  rerun();
+  assert.strictEqual(sent.length, 1);
+
+  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);   // expired and there is play today -> remind
+  clearMarkers();
+  rerun();
+  assert.strictEqual(sent.length, 2);
+  assert(text(1).includes('หมดอายุแล้ว'));
+
+  const w = capturePushes(world, true);                  // LINE rejects the card -> plain text with the same news
+  clearMarkers();
+  rerun();
+  assert.deepStrictEqual(w.map(b => b.messages[0].type), ['flex', 'text']);
+  assert(w[1].messages[0].text.includes('หมดอายุแล้ว'));
 });
 
 // ---------- runner ----------

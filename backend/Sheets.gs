@@ -2,9 +2,9 @@
 
 // ไม่ส่งให้หน้าเว็บ (payload สาธารณะ): ความลับ/ค่าฝั่ง server และคีย์เก่าที่ไม่มีโค้ดอ่านแล้ว (แถวยังอยู่ในชีท ไม่ได้ลบ)
 const LEGACY_SETTINGS = ["PRICE_WORKDAY", "PRICE_HOLIDAY", "MAX_WORKDAY_INITIAL", "MAX_WORKDAY_EXTENDED"];
-const HIDDEN_SETTINGS = ["ADMIN_PASS", "ADMIN_LINE_IDS", "LINE_CHANNEL_ID"].concat(LEGACY_SETTINGS);
+const HIDDEN_SETTINGS = ["ADMIN_PASS", "ADMIN_LINE_IDS", "LINE_CHANNEL_ID", "POINT_CARD_URL", "POINT_CARD_EXPIRES"].concat(LEGACY_SETTINGS);
 
-const ALL_DATA_CACHE_KEY = "all_data_v4"; // เปลี่ยนเลขเมื่อโครงสร้าง payload เปลี่ยน (v2 เพิ่ม rules/limits, v3 ตัดรอบเก่า, v4 แทน Point_URL ด้วย Has_Point_URL)
+const ALL_DATA_CACHE_KEY = "all_data_v5"; // เปลี่ยนเลขเมื่อโครงสร้าง payload เปลี่ยน (v2 เพิ่ม rules/limits, v3 ตัดรอบเก่า, v4 เพิ่มตัวบอกลิงก์ต่อรอบ, v5 เอาออก)
 
 const ALL_DATA_TTL = 300; // วินาที ล้างทุกครั้งที่เขียนผ่าน API/trigger ส่วนการแก้ชีทด้วยมือจะเห็นผลภายในเวลานี้ (หรือรัน clearDataCache)
 
@@ -48,12 +48,7 @@ function getHistory(ss) {
 
 function getAllData(ss) {
   const all = getHistory(ss);
-  // ลิงก์สแกนเก็บแต้มไม่ส่งออกใน payload สาธารณะ (ไม่ให้ใครสแกนก่อนมาตี) ส่งแค่ว่าตั้งแล้วหรือยัง
-  const sessions = all.sessions.filter(isCurrentSession).map(s => {
-    const { Point_URL, ...rest } = s;
-    rest.Has_Point_URL = !!String(Point_URL || "").trim();
-    return rest;
-  });
+  const sessions = all.sessions.filter(isCurrentSession);
   const keep = {};
   sessions.forEach(s => { keep[String(s.Session_ID).trim()] = true; });
   const registrations = all.registrations.filter(r => keep[String(r.Session_ID).trim()]);

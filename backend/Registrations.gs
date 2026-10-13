@@ -87,3 +87,28 @@ function cancel(ss, user, payload) {
   }
   return { status: "success", message: "ยกเลิกสำเร็จ", count: removed.length, removed };
 }
+
+// ผู้เล่นกดการ์ดแต้ม → หน้าเว็บเรียก claimPoint ลิงก์บัตรจริง (Settings POINT_CARD_URL) จะส่งให้เฉพาะคนที่ลงชื่ออยู่ในรอบนั้น
+// ภายใน 24 ชั่วโมงหลังได้รับการ์ดของรอบนั้น และเฉพาะตอนลิงก์ยังไม่หมดอายุ (รอบที่งดไม่ให้) แอดมินดูได้ตลอดเพื่อทดสอบ ลิงก์จริงจึงไม่ถูกส่งไปในข้อความ LINE
+function claimPoint(ss, line, payload) {
+  const user = requireUser(ss, line);
+  const sid = String(payload.session_id || "").trim();
+  const session = getSheetDataAsJSON(ss.getSheetByName("Sessions")).find(s => String(s.Session_ID).trim() === sid);
+  if (!session) fail("NOT_FOUND", "ไม่พบรอบนี้");
+
+  const card = getPointCard(ss);
+  const admin = isAdmin(ss, line.lineUid);
+  if (!admin) {
+    if (String(session.Status).trim() === "Cancelled") fail("CANCELLED", "รอบนี้ถูกงด");
+    const registered = getSheetDataAsJSON(ss.getSheetByName("Registrations"))
+      .some(r => String(r.Session_ID).trim() === sid && String(r.User_ID).trim() === user.User_ID);
+    if (!registered) fail("NOT_REGISTERED", "ไม่พบชื่อคุณในรอบนี้ ลิงก์แต้มสำหรับผู้ที่ลงชื่อเล่นเท่านั้น");
+    const sentAt = pointCardSentAt(session);
+    if (!sentAt) fail("NOT_SENT", "รอบนี้ยังไม่ได้ส่งการ์ดรับแต้ม");
+    if (Date.now() - sentAt > CLAIM_WINDOW_MS) fail("CLAIM_EXPIRED", "เลยเวลารับแต้มแล้ว (กดรับได้ภายใน 24 ชั่วโมงหลังได้รับการ์ด)");
+    if (card.expired) fail("EXPIRED", "ลิงก์รับแต้มหมดอายุแล้ว รอแอดมินใส่ลิงก์ใหม่");
+  }
+
+  if (!card.url) fail("NO_LINK", "ยังไม่ได้ตั้งลิงก์รับแต้ม");
+  return { status: "success", data: { url: card.url } };
+}

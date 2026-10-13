@@ -19,6 +19,8 @@ function notifyAdminsCancel(ss, user, sessionId, removed) {
   const sessionDate = session ? toSessionDate(session.date) : null;
   const daysLeft = sessionDate ? daysUntil(sessionDate) : null;
 
+  let remain = "";
+  const notes = [];
   const lines = [
     "❌ มีคนยกเลิกคิว",
     `👤 ${user.DisplayName}`,
@@ -30,22 +32,33 @@ function notifyAdminsCancel(ss, user, sessionId, removed) {
     const cap = rules.WORKDAY_HOUR_CAP;
     const h1 = regs.filter(x => inHour1(x.Hours_Joined)).length;
     const h2 = regs.filter(x => inHour2(x.Hours_Joined)).length;
-    lines.push(`👥 เหลือ 18-19 น. ${h1}/${cap} • 19-20 น. ${h2}/${cap}`);
+    remain = `18-19 น. ${h1}/${cap} • 19-20 น. ${h2}/${cap}`;
+    lines.push(`👥 เหลือ ${remain}`);
   } else {
-    lines.push(`👥 เหลือ ${regs.length} คน (ขั้นต่ำ ${rules.WEEKEND_MIN_PLAYERS})`);
+    remain = `${regs.length} คน (ขั้นต่ำ ${rules.WEEKEND_MIN_PLAYERS})`;
+    lines.push(`👥 เหลือ ${remain}`);
     if (regs.length < rules.WEEKEND_MIN_PLAYERS && daysLeft !== null && daysLeft < rules.WEEKEND_CLOSE_DAYS) {
       lines.push("⚠️ ปิดรับแล้วแต่จำนวนคนไม่ถึงขั้นต่ำ");
+      notes.push({ text: "⚠️ ปิดรับแล้วแต่จำนวนคนไม่ถึงขั้นต่ำ", color: ORANGE });
     }
   }
   if (daysLeft === 0 || daysLeft === 1) {
-    lines.push(`⏰ ยกเลิกกระชั้นชิด (เล่น${daysLeft === 0 ? "วันนี้" : "พรุ่งนี้"})`);
+    const soon = `⏰ ยกเลิกกระชั้นชิด (เล่น${daysLeft === 0 ? "วันนี้" : "พรุ่งนี้"})`;
+    lines.push(soon);
+    notes.push({ text: soon, color: ORANGE });
   }
 
-  pushToLine(adminIds, lines.join("\n"));
+  const text = lines.join("\n");
+  pushCardOrText(adminIds, buildNoticeFlex({
+    title: "❌ มีคนยกเลิกคิว", color: RED,
+    sub: lines[2].replace("📅 ", ""),
+    rows: [["ผู้เล่น", user.DisplayName], ["เวลา", hoursText], ["เหลือ", remain]],
+    notes, button: { label: "เปิดแอป", uri: LIFF_URL }
+  }, text.replace(/\n/g, " ")), text);
 }
 
 // ส่งข้อความหาหลายคนพร้อมกันผ่าน LINE Messaging API (multicast)
-// text เป็นสตริงเดียว หรืออาร์เรย์ของสตริง (ส่งเป็นหลายบับเบิลในครั้งเดียว สูงสุด 5)
+// text เป็นสตริงเดียว หรืออาร์เรย์ (ส่งเป็นหลายบับเบิลในครั้งเดียว สูงสุด 5) แต่ละตัวเป็นสตริง = ข้อความธรรมดา หรืออ็อบเจ็กต์ที่มี type (เช่น flex) = ส่งตามนั้น
 function pushToLine(userIds, text) {
   const token = PropertiesService.getScriptProperties().getProperty("LINE_MESSAGING_TOKEN");
   if (!token) {
@@ -58,7 +71,7 @@ function pushToLine(userIds, text) {
     headers: { Authorization: "Bearer " + token },
     payload: JSON.stringify({
       to: userIds,
-      messages: [].concat(text).slice(0, 5).map(t => ({ type: "text", text: String(t).slice(0, 5000) }))
+      messages: [].concat(text).slice(0, 5).map(t => (t && typeof t === "object" ? t : { type: "text", text: String(t).slice(0, 5000) }))
     }),
     muteHttpExceptions: true
   });
@@ -159,14 +172,17 @@ function pruneSentMarkers() {
   const all = props.getProperties();
   const cutoff = Date.now() - 7 * 86400000;
   Object.keys(all).forEach(k => {
-    if (!/^(book|post|point)_/.test(k)) return;
+    if (!/^(book|post|point|pexp)_/.test(k)) return;
     const t = Number(all[k]);
     if (!t || t < cutoff) props.deleteProperty(k); // ค่า "1" แบบเก่าไม่มีเวลา ถือว่าเก่า
   });
 }
 
 // ทริกเกอร์ทุกวัน 10:00: วันที่มีรอบตี → ส่งข้อความโพสต์กลุ่ม LINE ให้แอดมินคัดลอกไปโพสต์
-function dailyAdminNotify() { runAdminNotify("post"); }
+function dailyAdminNotify() {
+  runAdminNotify("post");
+  pointExpiryNotify();
+}
 
 // ทริกเกอร์ทุกวัน 12:00: รอบวันหยุดที่อีก BOOK_NOTICE_DAYS วันจะเล่น → แจ้งจำนวนคนที่ลงชื่อ เพื่อให้จองคอร์ด
 function bookCourtNotify() { runAdminNotify("book"); }
@@ -210,10 +226,18 @@ function runAdminNotify(kind) {
         `👥 ลงชื่อแล้ว ${regs.length} คน (ขั้นต่ำ ${rules.WEEKEND_MIN_PLAYERS})`,
         `📝 ${names}`
       ];
-      if (days > rules.WEEKEND_CLOSE_DAYS) lines.push(`ยังรับลงชื่อได้ถึง ${formatThaiDate(lastReg)}`);
-      else if (days === rules.WEEKEND_CLOSE_DAYS) lines.push(`ยังรับลงชื่อได้ถึงสิ้นวันนี้ (${formatThaiDate(lastReg)})`);
-      if (regs.length < rules.WEEKEND_MIN_PLAYERS) lines.push("⚠️ ตอนนี้ยังไม่ถึงขั้นต่ำ");
-      const bookRes = pushToLine(adminIds, lines.join("\n"));
+      const notes = [];
+      if (days > rules.WEEKEND_CLOSE_DAYS) notes.push({ text: `ยังรับลงชื่อได้ถึง ${formatThaiDate(lastReg)}` });
+      else if (days === rules.WEEKEND_CLOSE_DAYS) notes.push({ text: `ยังรับลงชื่อได้ถึงสิ้นวันนี้ (${formatThaiDate(lastReg)})` });
+      if (regs.length < rules.WEEKEND_MIN_PLAYERS) notes.push({ text: "⚠️ ตอนนี้ยังไม่ถึงขั้นต่ำ", color: ORANGE });
+      notes.forEach(n => lines.push(n.text));
+      const text = lines.join("\n");
+      const bookRes = pushCardOrText(adminIds, buildNoticeFlex({
+        title: "📣 แจ้งจองคอร์ดรอบวันหยุด", color: ORANGE,
+        sub: `${formatThaiDate(date)}${session.location ? " • " + session.location : ""} (อีก ${days} วัน)`,
+        rows: [["ลงชื่อแล้ว", `${regs.length} คน (ขั้นต่ำ ${rules.WEEKEND_MIN_PLAYERS})`], ["รายชื่อ", names]],
+        notes, button: { label: "เปิดแอป", uri: LIFF_URL }
+      }, text.replace(/\n/g, " ")), text);
       if (bookRes.code === 200) markSent(`book_${sid}_${todayKey}`);
     }
 
@@ -249,13 +273,119 @@ function testDailyNotify() {
   if (res.code !== 200) throw new Error("ส่งไม่สำเร็จ: " + res.code + " " + res.body);
 }
 
-// ทริกเกอร์ทุกวัน 21:00: วันเล่น → ส่งข้อความให้ผู้เล่นที่ลงชื่อ (ผูก LINE แล้ว) ไปสแกนเก็บแต้มบัตรสะสมแต้มของ LINE OA
-// ลิงก์เป็นของแต่ละรอบ (คอลัมน์ Point_URL ในชีท Sessions ที่แอดมินวางในหน้ารอบ) รอบที่ไม่มีลิงก์ = ไม่ส่ง
-// ผู้เล่นสแกนเอง ระบบไม่รู้ว่าใครสแกนแล้ว
+// การ์ดแจ้งเตือนรูปแบบเดียวกันทุกชนิด: หัวข้อสี + บรรทัดรอง + ข้อความ + แถว ชื่อ/ค่า + หมายเหตุ + ปุ่ม (ไม่บังคับ)
+// o = { title, color, sub, body, rows: [[label, value]], notes: [{ text, color }], button: { label, uri } }
+// altText = ข้อความที่เห็นในแชทลิสต์และการแจ้งเตือนบนหน้าจอ
+function buildNoticeFlex(o, altText) {
+  const gray = "#6B7280", dark = "#1F2937";
+  const body = [{ type: "text", text: o.title, weight: "bold", size: "lg", color: o.color, wrap: true }];
+  if (o.sub) body.push({ type: "text", text: o.sub, size: "sm", color: gray, wrap: true });
+  if (o.body) {
+    body.push({ type: "separator", margin: "md" });
+    body.push({ type: "text", text: String(o.body).slice(0, 1000), size: "sm", color: "#374151", wrap: true, margin: "md" });
+  }
+  if (o.rows && o.rows.length) {
+    body.push({ type: "separator", margin: "md" });
+    o.rows.forEach(r => body.push({
+      type: "box", layout: "baseline", spacing: "sm", margin: "md",
+      contents: [
+        { type: "text", text: String(r[0]), size: "sm", color: gray, flex: 3 },
+        { type: "text", text: String(r[1]).slice(0, 800), size: "sm", color: dark, wrap: true, flex: 7 }
+      ]
+    }));
+  }
+  (o.notes || []).forEach(n => body.push({ type: "text", text: String(n.text).slice(0, 500), size: "xs", color: n.color || gray, wrap: true, margin: "md" }));
+
+  const bubble = { type: "bubble", size: "kilo", body: { type: "box", layout: "vertical", spacing: "sm", contents: body } };
+  if (o.button) {
+    bubble.footer = {
+      type: "box", layout: "vertical",
+      contents: [{ type: "button", style: "primary", color: o.color, height: "sm", action: { type: "uri", label: o.button.label, uri: o.button.uri } }]
+    };
+  }
+  return { type: "flex", altText: String(altText).slice(0, 400), contents: bubble };
+}
+
+// ส่งการ์ด ถ้า LINE ปฏิเสธ (400 = ยังไม่มีข้อความไปถึงใคร) ส่งเป็นข้อความธรรมดาแทน ข้อผิดพลาดอื่นๆ คืนค่าให้ผู้เรียกจัดการ (เช่น รอบถัดไปลองใหม่)
+function pushCardOrText(userIds, card, fallbackText) {
+  const res = pushToLine(userIds, card);
+  return res.code === 400 ? pushToLine(userIds, fallbackText) : res;
+}
+
+const ORANGE = "#FF9500", RED = "#FF3B30", GREEN = "#34C759";
+
+// การ์ด (Flex Message) ชวนสแกนเก็บแต้ม: หัวข้อ + วัน/สนาม + ปุ่มเปิดลิงก์ ถ้าแสดงการ์ดไม่ได้ จะเห็นข้อความ altText แทน
+function buildPointFlex(date, location, url) { // url = ลิงก์เข้าระบบ (ไม่ใช่ลิงก์แต้มจริง) ดู pointGateUrl
+  const when = formatThaiDate(date) + (location ? " • " + location : "");
+  return {
+    type: "flex",
+    altText: `🏸 ขอบคุณพี่คนเก่ง รับแต้มสะสมได้ที่ ${url}`.slice(0, 400),
+    contents: {
+      type: "bubble",
+      size: "kilo",
+      body: {
+        type: "box", layout: "vertical", spacing: "md",
+        contents: [
+          { type: "text", text: "🏸 ขอบคุณพี่คนเก่ง", weight: "bold", size: "lg", color: "#1F2937", wrap: true },
+          { type: "text", text: when, size: "sm", color: "#6B7280", wrap: true },
+          { type: "separator", margin: "md" },
+          { type: "text", text: "รับแต้มสะสม แล้วมาตบฟรีได้เลย 🎁", size: "sm", color: "#374151", wrap: true, margin: "md" },
+          { type: "text", text: "กดรับได้ภายใน 24 ชั่วโมง", size: "xs", color: "#9CA3AF", margin: "sm" }
+        ]
+      },
+      footer: {
+        type: "box", layout: "vertical",
+        contents: [{ type: "button", style: "primary", color: "#34C759", height: "sm", action: { type: "uri", label: "รับแต้ม", uri: url } }]
+      }
+    }
+  };
+}
+
+const CLAIM_WINDOW_MS = 24 * 3600000; // ผู้เล่นกดรับแต้มได้ภายใน 24 ชั่วโมงหลังได้รับการ์ด
+
+// เวลาที่ส่งการ์ดแต้มของรอบนั้นสำเร็จ (ตัวจดกันส่งซ้ำเก็บเวลาไว้) 0 = ยังไม่ได้ส่ง
+function pointCardSentAt(session) {
+  const d = toSessionDate(session.Date);
+  if (!d) return 0;
+  const key = `point_${String(session.Session_ID).trim()}_${Utilities.formatDate(d, "Asia/Bangkok", "yyyyMMdd")}`;
+  return Number(PropertiesService.getScriptProperties().getProperty(key)) || 0;
+}
+
+// ลิงก์ในการ์ดแต้ม: เปิดแอป (LIFF) พร้อมรหัสรอบ แอปจะให้ผู้เล่นเข้าสู่ระบบ ตรวจสิทธิ์ แล้วพาไปลิงก์แต้มจริง
+function pointGateUrl(sessionId) {
+  return LIFF_URL + "?claim=" + encodeURIComponent(sessionId);
+}
+
+// บัตรสะสมแต้มของ LINE OA: ลิงก์เดียวใช้ทุกรอบ (Settings POINT_CARD_URL) + วันหมดอายุ (POINT_CARD_EXPIRES ไม่ใส่ = ไม่หมดอายุ)
+// daysLeft: 0 = วันนี้เป็นวันสุดท้ายที่ใช้ได้, ติดลบ = หมดอายุแล้ว
+function getPointCard(ss) {
+  const url = String(getSetting(ss, "POINT_CARD_URL") || "").trim();
+  const expires = parseCardExpiry(getSetting(ss, "POINT_CARD_EXPIRES"));
+  const daysLeft = expires ? daysUntil(expires) : null;
+  return { url, expires, daysLeft, expired: daysLeft !== null && daysLeft < 0 };
+}
+
+// ชีทเก็บวันหมดอายุเป็นข้อความ yyyy-MM-dd แต่ Google Sheets อาจแปลงเป็นวันที่เอง จึงรับได้ทั้งสองแบบ
+function parseCardExpiry(v) {
+  if (v === "" || v === null || v === undefined) return null;
+  const t = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return Utilities.parseDate(t, "Asia/Bangkok", "yyyy-MM-dd");
+  return toSessionDate(v);
+}
+
+function cardExpiryText(v) {
+  const d = parseCardExpiry(v);
+  return d ? Utilities.formatDate(d, "Asia/Bangkok", "yyyy-MM-dd") : "";
+}
+
+// ทริกเกอร์ทุกวัน 21:00: วันเล่น → ส่งการ์ดให้ผู้เล่นที่ลงชื่อ (ผูก LINE แล้ว) ไปรับแต้มบัตรสะสมแต้มของ LINE OA
+// ส่งเมื่อตั้งลิงก์บัตรไว้และบัตรยังไม่หมดอายุ (วันสุดท้ายยังส่ง) รอบที่งดไม่ส่ง ผู้เล่นรับเอง ระบบไม่รู้ว่าใครรับแล้ว
 function pointReminderNotify() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureSheetsExist(ss);
   pruneSentMarkers();
+  const card = getPointCard(ss);
+  if (!card.url || card.expired) return;
 
   const todayKey = Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyyMMdd");
   const lineById = {};
@@ -265,8 +395,7 @@ function pointReminderNotify() {
   getSheetDataAsJSON(ss.getSheetByName("Sessions")).forEach(row => {
     if (!row.Session_ID || String(row.Status).trim() === "Cancelled") return;
     const date = toSessionDate(row.Date);
-    const pointUrl = String(row.Point_URL || "").trim();
-    if (!pointUrl || !date || daysUntil(date) !== 0) return;
+    if (!date || daysUntil(date) !== 0) return;
     const sid = String(row.Session_ID).trim();
     const key = `point_${sid}_${todayKey}`;
     if (wasSent(key)) return;
@@ -277,9 +406,46 @@ function pointReminderNotify() {
       .filter((id, i, a) => id && a.indexOf(id) === i);
     if (!lineIds.length) return;
 
-    const res = pushToLine(lineIds, `🏸 ขอบคุณที่มาตีวันนี้ (${formatThaiDate(date)})\nอย่าลืมสแกนเก็บแต้มสะสมนะครับ 🎁\n${pointUrl}`);
+    // การ์ดชี้ไปที่ระบบ (LIFF) ก่อน ระบบเช็กว่าคนกดลงชื่ออยู่ในรอบนี้แล้วค่อยพาไปลิงก์บัตรจริง ลิงก์จริงไม่ถูกส่งออกไปในข้อความ
+    const gateUrl = pointGateUrl(sid);
+    const res = pushCardOrText(lineIds, buildPointFlex(date, String(row.Location || "").trim(), gateUrl),
+      `🏸 ขอบคุณพี่คนเก่ง (${formatThaiDate(date)})\nรับแต้มสะสม แล้วมาตบฟรีได้เลย 🎁\n${gateUrl}`);
     if (res.code === 200) markSent(key);
   });
+}
+
+// ทริกเกอร์ 10:00 (ต่อจาก dailyAdminNotify): ถึงวันหมดอายุของลิงก์รับแต้ม → แจ้งแอดมินให้ไปใส่ลิงก์ใหม่/วันหมดอายุใหม่ในหน้าตั้งค่า
+// ถึงวันหมดอายุแจ้งหนึ่งครั้ง หลังจากนั้นถ้ายังไม่อัปเดต แจ้งซ้ำเฉพาะวันที่มีรอบเล่น (วันที่ผู้เล่นจะพลาดแต้ม)
+function pointExpiryNotify() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ensureSheetsExist(ss);
+  const card = getPointCard(ss);
+  if (!card.url || card.daysLeft === null || card.daysLeft > 0) return;
+  const adminIds = getAdminIds(ss);
+  if (!adminIds.length) return;
+
+  const key = `pexp_${Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyyMMdd")}`;
+  if (wasSent(key)) return;
+
+  if (card.expired) {
+    const playToday = getSheetDataAsJSON(ss.getSheetByName("Sessions")).some(s => {
+      const d = toSessionDate(s.Date);
+      return s.Session_ID && String(s.Status).trim() !== "Cancelled" && d && daysUntil(d) === 0;
+    });
+    if (!playToday) return;
+  }
+
+  const when = formatThaiDate(card.expires);
+  const title = card.expired ? "⚠️ ลิงก์รับแต้มหมดอายุแล้ว" : "⏰ ลิงก์รับแต้มหมดอายุวันนี้";
+  const note = card.expired
+    ? "วันนี้มีรอบเล่น แต่ผู้เล่นจะไม่ได้รับการ์ดแต้ม จนกว่าจะใส่ลิงก์ใหม่และวันหมดอายุใหม่ในหน้าตั้งค่า"
+    : "อย่าลืมใส่ลิงก์ใหม่และวันหมดอายุใหม่ในหน้าตั้งค่า หลังจากวันนี้ผู้เล่นจะไม่ได้รับการ์ดแต้ม";
+  const res = pushCardOrText(adminIds, buildNoticeFlex({
+    title, color: card.expired ? RED : ORANGE,
+    rows: [["หมดอายุ", when]], body: note,
+    button: { label: "ไปหน้าตั้งค่า", uri: LIFF_URL }
+  }, `${title} (${when})`), `${title}\n📅 หมดอายุ ${when}\n${note}`);
+  if (res.code === 200) markSent(key);
 }
 
 // รอบวันหยุดที่ปิดรับแล้ว: ถ้าคนไม่ถึงขั้นต่ำ → งดรอบ + แจ้งผู้เล่นทุกคน + แจ้งแอดมิน
@@ -330,7 +496,9 @@ function checkWeekendQuorum() {
     const names = people.map(u => u.DisplayName).join(", ") || "-";
 
     if (res.ok) {
-      if (adminIds.length) pushToLine(adminIds, `✅ รอบวันหยุดได้ไปต่อ\n📅 ${when}\n👥 ${people.length} คน: ${names}`);
+      if (adminIds.length) pushToLine(adminIds, `✅ รอบวันหยุดได้ไปต่อ
+📅 ${when}
+👥 ${people.length} คน: ${names}`);
       return;
     }
 
@@ -338,16 +506,21 @@ function checkWeekendQuorum() {
     const noLine = people.filter(u => !String(u.Line_UID || "").trim()).map(u => u.DisplayName);
 
     if (lineIds.length) {
-      pushToLine(lineIds,
-        `😢 งดตีรอบวันหยุด\n📅 ${when}\n` +
-        `มีคนลงชื่อ ${people.length} คน ไม่ถึง ${rules.WEEKEND_MIN_PLAYERS} คนตามเงื่อนไข จึงขอยกเลิกรอบนี้นะครับ\n` +
-        `ไว้เจอกันรอบหน้า 🏸`);
+      const reason = `มีคนลงชื่อ ${people.length} คน ไม่ถึง ${rules.WEEKEND_MIN_PLAYERS} คนตามเงื่อนไข จึงขอยกเลิกรอบนี้นะครับ\nไว้เจอกันรอบหน้า 🏸`;
+      pushCardOrText(lineIds, buildNoticeFlex({
+        title: "😢 งดตีรอบวันหยุด", color: RED, sub: when, body: reason
+      }, `😢 งดตีรอบวันหยุด ${when}`), `😢 งดตีรอบวันหยุด\n📅 ${when}\n${reason}`);
     }
     if (adminIds.length) {
       let msg = `📣 ระบบงดรอบวันหยุดอัตโนมัติ\n📅 ${when}\n👥 ลงชื่อ ${people.length}/${rules.WEEKEND_MIN_PLAYERS} คน: ${names}\n` +
                 `แจ้งผู้เล่นทาง LINE แล้ว ${lineIds.length} คน`;
-      if (noLine.length) msg += `\n⚠️ คนที่ต้องแจ้งเอง (ไม่ได้ผูก LINE): ${noLine.join(", ")}`;
-      pushToLine(adminIds, msg);
+      const notes = noLine.length ? [{ text: `⚠️ คนที่ต้องแจ้งเอง (ไม่ได้ผูก LINE): ${noLine.join(", ")}`, color: ORANGE }] : [];
+      if (noLine.length) msg += `\n${notes[0].text}`;
+      pushCardOrText(adminIds, buildNoticeFlex({
+        title: "📣 งดรอบอัตโนมัติ", color: RED, sub: when,
+        rows: [["ลงชื่อ", `${people.length}/${rules.WEEKEND_MIN_PLAYERS} คน`], ["รายชื่อ", names], ["แจ้งแล้ว", `${lineIds.length} คน ทาง LINE`]],
+        notes, button: { label: "เปิดแอป", uri: LIFF_URL }
+      }, `📣 ระบบงดรอบวันหยุดอัตโนมัติ ${when}`), msg);
     }
   });
 }
