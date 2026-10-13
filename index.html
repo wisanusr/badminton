@@ -1344,7 +1344,8 @@
                 );
             }
 
-            if (authLoading || (publicViewMode && loading)) {
+            // ผู้ใช้ใหม่ (ยังไม่มีโปรไฟล์) ต้องรอรายชื่อสมาชิกโหลดก่อน ไม่งั้นรายชื่อ "เลือกชื่อเดิม" จะว่างแล้วสร้างโปรไฟล์ซ้ำ
+            if (authLoading || (publicViewMode && loading) || (!publicViewMode && !currentUser && loading)) {
                 return (
                     <div className="min-h-screen flex flex-col items-center justify-center gap-4">
                         <span className="text-5xl">🏸</span>
