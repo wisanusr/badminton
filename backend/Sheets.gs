@@ -1,10 +1,17 @@
 // Sheet read/write helpers and the cached getAllData payload.
 
-const HIDDEN_SETTINGS = ["ADMIN_PASS", "ADMIN_LINE_IDS"];
+// ไม่ส่งให้หน้าเว็บ (payload สาธารณะ): ความลับ/ค่าฝั่ง server และคีย์เก่าที่ไม่มีโค้ดอ่านแล้ว (แถวยังอยู่ในชีท ไม่ได้ลบ)
+const LEGACY_SETTINGS = ["PRICE_WORKDAY", "PRICE_HOLIDAY", "MAX_WORKDAY_INITIAL", "MAX_WORKDAY_EXTENDED"];
+const HIDDEN_SETTINGS = ["ADMIN_PASS", "ADMIN_LINE_IDS", "LINE_CHANNEL_ID"].concat(LEGACY_SETTINGS);
 
 const ALL_DATA_CACHE_KEY = "all_data_v2"; // เปลี่ยนเลขเมื่อโครงสร้าง payload เปลี่ยน (v2 เพิ่ม rules, limits)
 
-const ALL_DATA_TTL = 30; // วินาที (แก้ชีทด้วยมือจะเห็นผลภายในเวลานี้)
+const ALL_DATA_TTL = 300; // วินาที ล้างทุกครั้งที่เขียนผ่าน API/trigger ส่วนการแก้ชีทด้วยมือจะเห็นผลภายในเวลานี้ (หรือรัน clearDataCache)
+
+// ล้าง cache ของ getAllData หลังข้อมูลในชีทเปลี่ยน (เรียกจากทุกที่ที่เขียนชีท) รันจาก editor ได้หลังแก้ชีทด้วยมือ
+function clearDataCache() {
+  CacheService.getScriptCache().remove(ALL_DATA_CACHE_KEY);
+}
 
 // ผู้ใช้ทุกคนเรียก getAllData ตอนเปิดแอป อ่านชีท 4 แผ่นทุกครั้งช้า จึงแคชไว้สั้นๆ
 function getAllDataCached(ss) {
@@ -33,7 +40,8 @@ function getAllData(ss) {
   const settingRows = getSheetDataAsJSON(ss.getSheetByName("Settings"));
   const settings = {};
   settingRows.forEach(s => {
-    if (s.Key && HIDDEN_SETTINGS.indexOf(s.Key) === -1) settings[s.Key] = s.Value;
+    // Key ซ้ำ: ใช้แถวแรก (ตรงกับ getSetting และหน้าตั้งค่า)
+    if (s.Key && HIDDEN_SETTINGS.indexOf(s.Key) === -1 && !settings.hasOwnProperty(s.Key)) settings[s.Key] = s.Value;
   });
 
   // rules = กติกาที่ตรวจช่วงแล้ว (ตัวเดียวกับที่ server ใช้), limits = ช่วงที่ยอมรับ (ใช้กับช่องกรอกในหน้าตั้งค่า)

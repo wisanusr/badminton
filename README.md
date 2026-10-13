@@ -54,6 +54,9 @@ Apps Script รวมทุกไฟล์ `.gs` ไว้ใน global เด�
 9. ทดสอบจาก editor: `testNotify`, `testDailyNotify` (ส่งข้อความทดสอบถึงแอดมิน)
 
 ฟังก์ชันที่รันมือจาก editor ได้: `initialSetup`, `setupTriggers`, `migrateChecklist` (ย้ายเช็คลิสต์รอบเก่า), `testNotify`, `testDailyNotify`
+และ
+- `dedupeSettings` — ถ้าชีท Settings มี Key ซ้ำ (เคยเกิดเมื่อหลายคำขอตั้งค่าพร้อมกันตอน cache ว่าง) จะเก็บแถวแรกของแต่ละ Key แล้วลบแถวที่ซ้ำ ใน log จะเตือนถ้าค่าที่ลบต่างจากที่เก็บไว้
+- `clearDataCache` — ล้าง cache ของ `getAllData` หลังแก้ชีทด้วยมือ (ถ้าไม่ล้าง จะเห็นผลในแอปภายใน 5 นาที)
 
 ## นำโค้ดเข้า Apps Script
 
@@ -107,7 +110,8 @@ Backend ควรรองรับหน้าเว็บทั้งเวอ
 
 - ตัวตนผู้ใช้มาจาก **LINE ID token** ที่ตรวจกับ LINE ทุกครั้ง (cache ได้ไม่เกิน 10 นาที) ไม่เชื่อ user id ที่หน้าเว็บส่งมา
 - action ของแอดมินตรวจจาก `ADMIN_LINE_IDS` ฝั่ง server
-- `getAllData` เปิดให้อ่านโดยไม่ต้อง login (ใช้กับหน้า public) ข้อมูลที่ส่งออกคือรอบ รายชื่อ และชื่อผู้เล่น ไม่รวม LINE userId
+- `getAllData` เปิดให้อ่านโดยไม่ต้อง login (ใช้กับหน้า public) ข้อมูลที่ส่งออกคือรอบ รายชื่อ และชื่อผู้เล่น ไม่รวม LINE userId และไม่ส่ง `LINE_CHANNEL_ID`, `ADMIN_LINE_IDS` กับคีย์เก่าที่เลิกใช้แล้ว (`PRICE_*`, `MAX_WORKDAY_*`)
+- `getAllData` ถูก cache 5 นาที และล้างทุกครั้งที่เขียนผ่าน API หรือ trigger
 - ห้าม commit token/ความลับลง repo (ใช้ Script Properties)
 
 ## ทดสอบ

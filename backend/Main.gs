@@ -53,7 +53,7 @@ function handleRequest(action, payload, idToken) {
   try {
     result = dispatchWrite(ss, line, action, payload, ctx);
   } finally {
-    CacheService.getScriptCache().remove(ALL_DATA_CACHE_KEY); // ข้อมูลเปลี่ยนแล้ว ให้โหลดใหม่จากชีท
+    clearDataCache(); // ข้อมูลเปลี่ยนแล้ว ให้โหลดใหม่จากชีท
     lock.releaseLock();
   }
 

@@ -145,6 +145,82 @@ test('getAllData: sends validated rules and limits (single source for the web pa
   assert.strictEqual(d.rules.COST_SPLIT_BASE, 6);
 });
 
+test('settings: first-time setup takes the lock and re-checks (concurrent requests must not run it twice)', ({ G, world, sheets }) => {
+  const h = G('handleRequest');
+  // count calls to initialSetup (global function; callers resolve the name at call time)
+  G('(function () { globalThis.__origSetup = initialSetup; globalThis.__setupCalls = 0; initialSetup = function () { __setupCalls++; return __origSetup(); }; })')();
+  // The cache is cold, so ensureSheetsExist must take the lock. Simulate a concurrent request that
+  // finishes the setup while we wait: it fills in the settings and marks setup as done.
+  let locks = 0;
+  world.hooks.onWaitLock = () => {
+    if (locks++) return;
+    G('__origSetup')();
+    world.cache.set('setup_ok', '1');
+  };
+  h('getAllData', {}, null);
+  assert.strictEqual(locks, 1, 'lock taken while the cache was cold');
+  assert.strictEqual(G('globalThis.__setupCalls'), 0, 'setup not repeated: the other request already did it');
+  const keys = sheets.Settings.rows.slice(1).map(r => r[0]);
+  assert.strictEqual(new Set(keys).size, keys.length, 'no duplicated keys: ' + keys.join(','));
+  h('getAllData', {}, null);
+  assert.strictEqual(locks, 1, 'no lock once setup is cached');
+});
+
+test('settings: public payload hides secrets and legacy keys', ({ G, sheets }) => {
+  sheets.Settings.rows.push(['PRICE_WORKDAY', 200, ''], ['MAX_WORKDAY_INITIAL', 6, ''], ['LINE_POST_TEMPLATE', 'hi {วัน}', '']);
+  const s = G('handleRequest')('getAllData', {}, null).data.settings;
+  for (const k of ['LINE_CHANNEL_ID', 'ADMIN_LINE_IDS', 'PRICE_WORKDAY', 'MAX_WORKDAY_INITIAL']) assert(!(k in s), k + ' must not be sent');
+  assert.strictEqual(s.LINE_POST_TEMPLATE, 'hi {วัน}', 'template is still sent');
+  assert.strictEqual(s.COST_SPLIT_BASE, 6);
+});
+
+test('settings: admin list has no legacy keys, no secrets, no duplicate rows', ({ G, sheets }) => {
+  sheets.Settings.rows.push(['PRICE_HOLIDAY', 120, ''], ['WORKDAY_MIN_PLAYERS', 6, ''], ['WORKDAY_MIN_PLAYERS', 7, '']);
+  const keys = G('handleRequest')('adminGetSettings', {}, 'tokAdmin').data.map(r => r.Key);
+  assert(!keys.includes('PRICE_HOLIDAY') && !keys.includes('LINE_CHANNEL_ID') && !keys.includes('ADMIN_LINE_IDS'));
+  assert.strictEqual(keys.filter(k => k === 'WORKDAY_MIN_PLAYERS').length, 1);
+});
+
+test('settings: duplicate keys resolve to the first row everywhere (rules, payload)', ({ G, sheets }) => {
+  sheets.Settings.rows.push(['SHUTTLECOCK_PRICE', 70, ''], ['SHUTTLECOCK_PRICE', 99, '']);
+  const d = G('handleRequest')('getAllData', {}, null).data;
+  assert.strictEqual(d.rules.SHUTTLECOCK_PRICE, 70);
+  assert.strictEqual(d.settings.SHUTTLECOCK_PRICE, 70);
+  assert.strictEqual(G('getSetting')(G('SpreadsheetApp').getActiveSpreadsheet(), 'SHUTTLECOCK_PRICE'), 70);
+});
+
+test('dedupeSettings: keeps the first row, removes repeats, reports conflicting values', ({ G, sheets }) => {
+  sheets.Settings.rows.push(['NOTIFY_PLAY_DAY', 'TRUE', ''], ['NOTIFY_PLAY_DAY', 'TRUE', ''],
+    ['WORKDAY_MIN_PLAYERS', 6, ''], ['WORKDAY_MIN_PLAYERS', 7, ''], ['', '', 'blank key row stays']);
+  const removed = G('dedupeSettings')();
+  const keys = sheets.Settings.rows.slice(1).map(r => r[0]).filter(Boolean);
+  assert.strictEqual(new Set(keys).size, keys.length);
+  assert.strictEqual(removed.length, 2);
+  assert.strictEqual(removed.find(r => r.key === 'NOTIFY_PLAY_DAY').differs, false);
+  assert.strictEqual(removed.find(r => r.key === 'WORKDAY_MIN_PLAYERS').differs, true);
+  assert.strictEqual(sheets.Settings.rows.find(r => r[0] === 'WORKDAY_MIN_PLAYERS')[1], 6, 'first value kept');
+  assert(sheets.Settings.rows.some(r => r[2] === 'blank key row stays'));
+  assert.strictEqual(G('dedupeSettings')().length, 0, 'second run finds nothing');
+});
+
+test('cache: getAllData is cached for 5 minutes; hand edits show after clearDataCache', ({ G, world, sheets }) => {
+  const h = G('handleRequest');
+  const n = h('getAllData', {}, null).data.registrations.length;
+  assert.strictEqual(world.cacheTtl.get(G('ALL_DATA_CACHE_KEY')), 300);
+  sheets.Registrations.appendRow([3, 'S3', 'U9', 'All', false, 'Unpaid']);
+  assert.strictEqual(h('getAllData', {}, null).data.registrations.length, n, 'still cached');
+  G('clearDataCache')();
+  assert.strictEqual(h('getAllData', {}, null).data.registrations.length, n + 1);
+});
+
+test('cache: the quorum trigger clears it when it cancels a session', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  assert.strictEqual(h('getAllData', {}, null).data.sessions.find(s => s.Session_ID === 'S2').Status, 'Open');
+  G('checkWeekendQuorum')(); // S2 is a weekend session tomorrow with no players -> cancelled
+  assert.strictEqual(sheets.Sessions.rows[2][4], 'Cancelled');
+  assert.strictEqual(h('getAllData', {}, null).data.sessions.find(s => s.Session_ID === 'S2').Status, 'Cancelled');
+});
+
 test('adminUpdateRegistrations: delta keeps other people, no duplicates', ({ G, sheets }) => {
   const h = G('handleRequest');
   h('register', { session_id: 'S3' }, 'tokB'); // someone registers meanwhile

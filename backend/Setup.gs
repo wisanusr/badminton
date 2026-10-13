@@ -31,6 +31,7 @@ function initialSetup() {
   ensureSetting(ss, "SHUTTLECOCK_PRICE", 65, "ราคาลูกแบดต่อลูก (บาท)");
   ensureSetting(ss, "NOTIFY_PLAY_DAY", "TRUE", "แจ้งแอดมินทาง LINE 10:00 ในวันที่มีรอบตี พร้อมข้อความโพสต์กลุ่ม (TRUE/FALSE)");
   ensureSetting(ss, "BOOK_NOTICE_DAYS", 2, "รอบวันหยุด: แจ้งแอดมินจำนวนคนก่อนวันเล่นกี่วัน (เพื่อจองคอร์ด)");
+  clearDataCache();
 }
 
 // รันครั้งเดียวจาก editor หลังเปลี่ยนเช็คลิสต์เป็น: เพิ่มลูกแบด(Task3) / เก็บเงิน(Task2) / แจกแต้ม(Task4) / โอนเงินเข้าบัญชี(Task5)
@@ -49,15 +50,59 @@ function migrateChecklist() {
       n++;
     }
   }
+  clearDataCache();
   Logger.log("ตั้ง Task5 = TRUE ให้ " + n + " รอบ");
 }
 
 function ensureSheetsExist(ss) {
-  const missing = ["Settings", "Users", "Sessions", "Registrations"].some(n => !ss.getSheetByName(n));
   const cache = CacheService.getScriptCache();
-  if (missing || !cache.get("setup_ok")) {
+  const needsSetup = () => ["Settings", "Users", "Sessions", "Registrations"].some(n => !ss.getSheetByName(n)) || !cache.get("setup_ok");
+  if (!needsSetup()) return;
+
+  // ตอน cache ว่าง หลายคำขอ (เช่น me กับ getAllData ตอนเปิดแอป) เข้ามาพร้อมกัน ถ้าต่างคนต่างรัน initialSetup
+  // จะเพิ่มแถว Settings ซ้ำ จึงให้ทำทีละคนและเช็คซ้ำหลังได้ lock (คนก่อนหน้าอาจทำเสร็จแล้ว)
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    _settingKeys = null; // อ่านรายชื่อ Key ใหม่หลังได้ lock
+    if (!needsSetup()) return;
     initialSetup();
     cache.put("setup_ok", "1", 21600);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// รันจาก editor ครั้งเดียวถ้าชีท Settings มี Key ซ้ำ: เก็บแถวแรกของแต่ละ Key (ตรงกับที่ getSetting และหน้าตั้งค่าอ่าน/แก้)
+// แล้วลบแถวที่ซ้ำ ถ้าค่าของแถวที่ซ้ำต่างจากแถวที่เก็บไว้ จะแสดงใน log เพื่อให้ตรวจเอง
+function dedupeSettings() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const sheet = ss.getSheetByName("Settings");
+    const values = sheet.getDataRange().getValues();
+    const width = values[0].length;
+    const seen = {};
+    const kept = [];
+    const removed = [];
+    for (let i = 1; i < values.length; i++) {
+      const key = String(values[i][0]).trim();
+      if (key && seen.hasOwnProperty(key)) {
+        removed.push({ key, kept: seen[key], dropped: values[i][1], differs: String(seen[key]) !== String(values[i][1]) });
+        continue;
+      }
+      if (key) seen[key] = values[i][1];
+      kept.push(values[i]);
+    }
+    if (!removed.length) { Logger.log("ไม่มี Key ซ้ำ"); return removed; }
+    sheet.getRange(2, 1, values.length - 1, width).clearContent();
+    if (kept.length) sheet.getRange(2, 1, kept.length, width).setValues(kept);
+    clearDataCache();
+    removed.forEach(r => Logger.log(`ลบแถวซ้ำ ${r.key}: เก็บ "${r.kept}" ลบ "${r.dropped}"${r.differs ? "  ⚠️ ค่าต่างกัน ตรวจว่าค่าที่เก็บไว้ถูกต้อง" : ""}`));
+    return removed;
+  } finally {
+    lock.releaseLock();
   }
 }
 

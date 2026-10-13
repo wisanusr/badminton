@@ -114,8 +114,10 @@ const READONLY_SETTINGS = ["ADMIN_PASS", "ADMIN_LINE_IDS", "LINE_CHANNEL_ID"]; /
 const CREATABLE_SETTINGS = ["LINE_POST_TEMPLATE"];
 
 function adminGetSettings(ss) {
+  const seen = {};
   const rows = getSheetDataAsJSON(ss.getSheetByName("Settings"))
-    .filter(r => r.Key && READONLY_SETTINGS.indexOf(String(r.Key)) === -1)
+    .filter(r => r.Key && READONLY_SETTINGS.indexOf(String(r.Key)) === -1 && LEGACY_SETTINGS.indexOf(String(r.Key)) === -1)
+    .filter(r => !seen[r.Key] && (seen[r.Key] = true)) // Key ซ้ำในชีท: แสดงแถวแรกแถวเดียว
     .map(r => ({ Key: String(r.Key), Value: r.Value, Description: r.Description || "" }));
   return { status: "success", data: rows };
 }
