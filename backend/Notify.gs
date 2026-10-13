@@ -285,6 +285,7 @@ function checkWeekendQuorum() {
     lock.releaseLock();
   }
   if (!results.length) return;
+  clearDataCache(); // สถานะรอบอาจถูกเปลี่ยนเป็น Cancelled
 
   const byId = {};
   getSheetDataAsJSON(ss.getSheetByName("Users")).forEach(u => { byId[String(u.User_ID).trim()] = u; });

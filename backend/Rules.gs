@@ -37,8 +37,11 @@ function settingInRange(key, n) {
 // เป็นแหล่งความจริงเดียวของกติกา: server ใช้เอง และส่งให้หน้าเว็บผ่าน getAllData (rules)
 function rulesFromSettings(rows) {
   const rules = Object.assign({}, DEFAULT_RULES);
+  const seen = {};
   rows.forEach(s => {
-    if (!rules.hasOwnProperty(s.Key) || s.Value === "" || isNaN(Number(s.Value))) return;
+    if (!rules.hasOwnProperty(s.Key) || seen[s.Key]) return; // Key ซ้ำ: ใช้แถวแรก (ตรงกับ getSetting และหน้าตั้งค่า)
+    seen[s.Key] = true;
+    if (s.Value === "" || isNaN(Number(s.Value))) return;
     if (settingInRange(s.Key, Number(s.Value))) rules[s.Key] = Number(s.Value);
   });
   return rules;

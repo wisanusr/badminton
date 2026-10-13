@@ -60,17 +60,19 @@ function formatDate(d, tz, pattern) {
 // Build a fresh world: sheets + services. `tokens` maps id_token -> LINE verify response body.
 function mkWorld({ sheets, tokens = {} }) {
   const cache = new Map();
+  const cacheTtl = new Map();
+  const hooks = { onWaitLock: null }; // tests can simulate another request finishing while we wait for the lock
   const props = new Map();
   const ss = { getSheetByName: n => sheets[n] || null, insertSheet: n => (sheets[n] = mkSheet([[]])) };
   const fetchLog = [];
   return {
-    sheets, cache, props, fetchLog,
+    sheets, cache, cacheTtl, props, fetchLog, hooks,
     globals: {
       console,
       SpreadsheetApp: { getActiveSpreadsheet: () => ss },
       CacheService: { getScriptCache: () => ({
         get: k => (cache.has(k) ? cache.get(k) : null),
-        put: (k, v) => { cache.set(k, v); },
+        put: (k, v, ttl) => { cache.set(k, v); cacheTtl.set(k, ttl); },
         remove: k => { cache.delete(k); }
       }) },
       PropertiesService: { getScriptProperties: () => ({
@@ -79,7 +81,11 @@ function mkWorld({ sheets, tokens = {} }) {
         deleteProperty: k => { props.delete(k); },
         getProperties: () => Object.fromEntries(props)
       }) },
-      LockService: { getScriptLock: () => ({ tryLock: () => true, waitLock() {}, releaseLock() {} }) },
+      LockService: { getScriptLock: () => ({
+        tryLock: () => true,
+        waitLock() { if (hooks.onWaitLock) hooks.onWaitLock(); },
+        releaseLock() {}
+      }) },
       ContentService: {
         MimeType: { JSON: 'json' },
         createTextOutput: s => ({ text: s, setMimeType() { return this; } })
@@ -100,6 +106,7 @@ function mkWorld({ sheets, tokens = {} }) {
             : { getResponseCode: () => 400, getContentText: () => JSON.stringify({ error_description: 'invalid' }) };
         }
       },
+      Logger: { log() {} },
       ScriptApp: {}
     }
   };
