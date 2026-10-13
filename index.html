@@ -1140,6 +1140,14 @@
                 return err;
             };
 
+            // ดีบัก: ทุกคำขอที่หน้าเว็บส่งไป server เก็บไว้ใน window.__apiLog (ล่าสุด 200 รายการ) และพิมพ์ใน console เปิด DevTools ดูได้
+            const apiDebug = (action, payload, outcome, ms) => {
+                const entry = { time: new Date().toISOString(), action, payload, outcome, ms };
+                (window.__apiLog = window.__apiLog || []).push(entry);
+                if (window.__apiLog.length > 200) window.__apiLog.shift();
+                console.debug('[api]', action, outcome.status + (outcome.code ? ':' + outcome.code : ''), ms + 'ms', payload || '');
+            };
+
             const sendApiRequest = async (action, payload = null) => {
                 const isRead = action === 'me' || action === 'getAllData';
                 if (!isRead && liffReady) {
@@ -1152,6 +1160,7 @@
                 for (let attempt = 1; ; attempt++) {
                     const controller = new AbortController();
                     const timer = setTimeout(() => controller.abort(), 25000);
+                    const startedAt = Date.now();
                     try {
                         // ไม่ใส่ headers เพื่อให้เป็น text/plain และไม่ติด CORS preflight
                         const res = await fetch(GAS_URL, {
@@ -1160,10 +1169,12 @@
                             signal: controller.signal
                         });
                         const result = await res.json();
+                        apiDebug(action, payload, result, Date.now() - startedAt);
                         if (result.code === 'AUTH_EXPIRED') throw askRelogin(action === 'me'); // ตอนเปิดแอป (me) เข้าสู่ระบบใหม่เองทันที
                         return result;
                     } catch (e) {
                         if (e.isAuth) throw e;
+                        apiDebug(action, payload, { status: 'exception', message: e.message }, Date.now() - startedAt);
                         if (attempt < maxTries) continue;
                         if (e.name === 'AbortError') throw new Error("การเชื่อมต่อใช้เวลานานเกินไป กรุณาลองใหม่");
                         throw e;

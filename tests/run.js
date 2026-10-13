@@ -20,7 +20,8 @@ function backendFiles() {
 
 // ---------- fixtures ----------
 const DAY = 86400000;
-const inDays = n => new Date(Date.now() + n * DAY + 6 * 3600000); // mid-day, safely inside the target Bangkok date
+// noon (Bangkok) of the Bangkok date n days from now; a fixed +6h offset drifts onto the next date when the suite runs after 18:00 Bangkok
+const inDays = n => new Date(formatDate(new Date(Date.now() + n * DAY), 'Asia/Bangkok', 'yyyy-MM-dd') + 'T12:00:00+07:00');
 const nowSec = () => Math.floor(Date.now() / 1000);
 
 function fixture() {
@@ -57,7 +58,7 @@ function fixture() {
 
 function load(files) {
   const world = fixture();
-  const ctx = vm.createContext({ ...world.globals, console: { ...console, warn() {} } });
+  const ctx = vm.createContext({ ...world.globals, console: { ...console, warn() {}, log() {} } });
   files.forEach(f => vm.runInContext(fs.readFileSync(f, 'utf8'), ctx, { filename: f }));
   const G = name => vm.runInContext(name, ctx);
   return { world, G, sheets: world.sheets };
@@ -438,7 +439,7 @@ const setSheetSetting = (sheets, key, value) => {
   if (row) row[1] = value; else sheets.Settings.rows.push([key, value, '']);
 };
 const setCard = (sheets, url, expires) => { setSheetSetting(sheets, 'POINT_CARD_URL', url); setSheetSetting(sheets, 'POINT_CARD_EXPIRES', expires || ''); };
-const dayStr = n => formatDate(new Date(Date.now() + n * DAY + 6 * 3600000), 'Asia/Bangkok', 'yyyy-MM-dd');
+const dayStr = n => formatDate(new Date(Date.now() + n * DAY), 'Asia/Bangkok', 'yyyy-MM-dd');
 
 test('settings: card link must be https or empty, expiry a real date; admin sees them, the public payload does not', ({ G, sheets }) => {
   const h = G('handleRequest');
@@ -602,6 +603,109 @@ test('pointExpiryNotify: tells admins on the expiry day, then again only on play
   rerun();
   assert.deepStrictEqual(w.map(b => b.messages[0].type), ['flex', 'text']);
   assert(w[1].messages[0].text.includes('หมดอายุแล้ว'));
+});
+
+test('adding rows lands right after the real data even when the sheet is padded with checkbox rows', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const realRows = sheets.Sessions.rows.length;
+  // Google counts rows whose other columns hold FALSE checkboxes as used: pad 30 rows with an empty id but FALSE tasks
+  for (let i = 0; i < 30; i++) sheets.Sessions.rows.push(['', '', '', '', '', '', '', false, false, false, false, false]);
+  h('adminSaveSession', { date: '2030-03-04', location: 'Court Z', status: 'Open', cost: 200 }, 'tokAdmin');
+  const added = sheets.Sessions.rows.findIndex(r => String(r[3]) === 'Court Z');
+  assert.strictEqual(added, realRows, 'the new session is written into the first free row, not after the padding');
+  assert.strictEqual(sheets.Sessions.rows.length, realRows + 30, 'no extra rows added at the bottom');
+  assert.strictEqual(sheets.Sessions.rows[realRows - 1][0] === '', false, 'rows above are untouched');
+});
+
+test('adding a registration also lands after the real data on a padded Registrations sheet', ({ G, sheets }) => {
+  const real = sheets.Registrations.rows.length;
+  for (let i = 0; i < 10; i++) sheets.Registrations.rows.push(['', '', '', '', false, '']);
+  G('handleRequest')('register', { session_id: 'S3' }, 'tokA');
+  assert.strictEqual(String(sheets.Registrations.rows[real][1]), 'S3');
+  assert.strictEqual(sheets.Registrations.rows.length, real + 10);
+});
+
+// ---------- audit log ----------
+const auditRows = sheets => (sheets.AuditLog ? sheets.AuditLog.rows.slice(1) : []);
+const AC = { time: 0, source: 1, action: 2, who: 3, payload: 4, result: 5, message: 6, before: 7, after: 8 };
+
+test('audit: writes are logged with who / payload / result / row counts; plain reads are not', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  h('getAllData', {}, null);
+  h('adminGetHistory', {}, 'tokAdmin');
+  assert(!sheets.AuditLog || auditRows(sheets).length === 0, 'reads leave no row');
+
+  const regsBefore = sheets.Registrations.rows.length - 1;
+  h('register', { session_id: 'S3' }, 'tokA');
+  const [row] = auditRows(sheets);
+  assert.strictEqual(row[AC.source], 'api');
+  assert.strictEqual(row[AC.action], 'register');
+  assert(String(row[AC.who]).includes('Alice'));
+  assert(String(row[AC.payload]).includes('S3'));
+  assert.strictEqual(row[AC.result], 'OK');
+  assert(String(row[AC.before]).includes(`R:${regsBefore}`) && String(row[AC.after]).includes(`R:${regsBefore + 1}`), 'row counts before/after');
+  assert(!String(row[AC.before]).includes('S:'), 'player actions only count Registrations and Users');
+
+  h('adminSaveSession', { date: '2030-03-04', location: 'Court Z', status: 'Open', cost: 200 }, 'tokAdmin');
+  const sess = auditRows(sheets)[1];
+  assert(String(sess[AC.before]).includes('S:') && String(sess[AC.after]).includes('St:'), 'admin actions count every sheet');
+});
+
+test('audit: failures are logged with their code; bad tokens are not; secrets are hidden', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  expectCode(() => h('register', { session_id: 'S2' }, 'tokA'), 'CLOSED');
+  assert.strictEqual(auditRows(sheets)[0][AC.result], 'ERROR:CLOSED');
+  expectCode(() => h('register', { session_id: 'S3' }, 'nope'), 'AUTH_INVALID');
+  expectCode(() => h('register', { session_id: 'S3' }, null), 'AUTH_REQUIRED');
+  assert.strictEqual(auditRows(sheets).length, 1, 'auth failures do not fill the sheet');
+
+  h('adminSaveSetting', { key: 'POINT_CARD_URL', value: 'https://secret.example/card' }, 'tokAdmin');
+  const last = auditRows(sheets).pop();
+  assert(String(last[AC.payload]).includes('[hidden]') && !String(last[AC.payload]).includes('secret.example'));
+});
+
+test('audit: a write that loses rows it should not is flagged WARN and the admins are told', ({ G, world, sheets }) => {
+  const sent = capturePushes(world);
+  const h = G('handleRequest');
+  G('adminSaveUser = (ss) => { ss.getSheetByName("Sessions").rows.splice(2); return { status: "success", message: "x" }; }'); // simulate a bug
+  h('adminSaveUser', { user_id: 'U1', display_name: 'Alice' }, 'tokAdmin');
+  const row = auditRows(sheets).pop();
+  assert.strictEqual(row[AC.result], 'WARN');
+  assert(String(row[AC.message]).includes('Sessions'));
+  assert(sent.some(b => b.to.includes('Uadmin') && /ลดลง/.test(b.messages[0].text)), 'admins get a LINE alert');
+
+  assert.strictEqual(G('auditWarnings')('adminDeleteSession', { Sessions: 10, Users: 5, Registrations: 100, Settings: 3 }, { Sessions: 9, Users: 5, Registrations: 40, Settings: 3 }).length, 0, 'deleting one session and its registrations is expected');
+  assert.strictEqual(G('auditWarnings')('adminSaveSession', { Registrations: 100 }, { Registrations: 99 }).length, 1, 'other actions must not drop registrations');
+  assert.strictEqual(G('auditWarnings')('adminDeleteSession', { Sessions: 10 }, { Sessions: 8 }).length, 1);
+  assert.strictEqual(G('auditWarnings')('adminSaveSession', { Sessions: 10 }, { Sessions: 9 }).length, 1);
+  assert.strictEqual(G('auditWarnings')('adminMergeUsers', { Users: 10 }, { Users: 9 }).length, 0);
+});
+
+test('audit: time-based triggers are logged too, with the reason they did nothing', ({ G, world, sheets }) => {
+  capturePushes(world);
+  G('pointReminderNotify')();
+  const r = auditRows(sheets).pop();
+  assert.strictEqual(r[AC.source], 'trigger');
+  assert.strictEqual(r[AC.action], 'pointReminderNotify');
+  assert(String(r[AC.message]).includes('POINT_CARD_URL'), 'explains why nothing was sent');
+  G('checkWeekendQuorum')();
+  assert.strictEqual(auditRows(sheets).pop()[AC.action], 'checkWeekendQuorum');
+});
+
+test('audit: a broken log sheet never breaks the request; the log is pruned when it grows too large', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const good = sheets.AuditLog;
+  sheets.AuditLog = { getLastRow() { throw new Error('boom'); }, getRange() { throw new Error('boom'); } };
+  assert.strictEqual(h('register', { session_id: 'S3' }, 'tokA').status, 'success');
+
+  sheets.AuditLog = good || undefined;
+  if (!sheets.AuditLog) delete sheets.AuditLog;
+  h('cancel', { session_id: 'S3' }, 'tokA');      // creates the sheet
+  const rows = sheets.AuditLog.rows;
+  for (let i = 0; i < 5100; i++) rows.push([new Date(), 'api', 'x' + i, '', '', 'OK', '', '', '', 1]);
+  h('register', { session_id: 'S3' }, 'tokA');
+  assert(rows.length < 5100 + 3, 'oldest rows were dropped');
+  assert.strictEqual(rows[rows.length - 1][AC.action], 'register');
 });
 
 // ---------- runner ----------

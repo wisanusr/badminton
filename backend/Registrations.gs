@@ -62,7 +62,7 @@ function register(ss, user, payload) {
     sheet.getRange(myRows[0], 4, 1, 2).setValues([[hours, false]]);
     for (let j = myRows.length - 1; j >= 1; j--) sheet.deleteRow(myRows[j]);
   } else {
-    sheet.appendRow([new Date(), sid, user.User_ID, hours, false, "Unpaid"]);
+    appendRowAfterData(sheet, [new Date(), sid, user.User_ID, hours, false, "Unpaid"]);
   }
   return { status: "success", message: "ลงชื่อเรียบร้อย" };
 }

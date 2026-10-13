@@ -126,7 +126,7 @@ function ensureSetting(ss, key, value, desc) {
     _settingKeys = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), 1).getValues().map(r => String(r[0]).trim());
   }
   if (_settingKeys.indexOf(key) === -1) {
-    sheet.appendRow([key, value, desc]);
+    appendRowAfterData(sheet, [key, value, desc]);
     _settingKeys.push(key);
   }
 }
