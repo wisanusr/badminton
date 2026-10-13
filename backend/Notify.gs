@@ -385,9 +385,11 @@ function pointReminderNotify() {
   ensureSheetsExist(ss);
   pruneSentMarkers();
   const card = getPointCard(ss);
-  if (!card.url || card.expired) return;
+  if (!card.url) return console.log("pointReminderNotify: ข้าม เพราะยังไม่ได้ตั้งลิงก์รับแต้ม (POINT_CARD_URL ในหน้าตั้งค่า)");
+  if (card.expired) return console.log("pointReminderNotify: ข้าม เพราะลิงก์รับแต้มหมดอายุแล้ว (" + formatThaiDate(card.expires) + ")");
 
   const todayKey = Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyyMMdd");
+  let found = 0;
   const lineById = {};
   getSheetDataAsJSON(ss.getSheetByName("Users")).forEach(u => { lineById[String(u.User_ID).trim()] = String(u.Line_UID || "").trim(); });
   const allRegs = getSheetDataAsJSON(ss.getSheetByName("Registrations"));
@@ -397,21 +399,24 @@ function pointReminderNotify() {
     const date = toSessionDate(row.Date);
     if (!date || daysUntil(date) !== 0) return;
     const sid = String(row.Session_ID).trim();
+    found++;
     const key = `point_${sid}_${todayKey}`;
-    if (wasSent(key)) return;
+    if (wasSent(key)) return console.log(`pointReminderNotify: รอบ ${sid} ส่งไปแล้ววันนี้ (ลบ Script property "${key}" ถ้าต้องการส่งซ้ำเพื่อทดสอบ)`);
 
     const lineIds = allRegs
       .filter(r => String(r.Session_ID).trim() === sid)
       .map(r => lineById[String(r.User_ID).trim()])
       .filter((id, i, a) => id && a.indexOf(id) === i);
-    if (!lineIds.length) return;
+    if (!lineIds.length) return console.log(`pointReminderNotify: รอบ ${sid} ไม่มีผู้ลงชื่อที่ผูก LINE จึงไม่มีใครให้ส่ง`);
 
     // การ์ดชี้ไปที่ระบบ (LIFF) ก่อน ระบบเช็กว่าคนกดลงชื่ออยู่ในรอบนี้แล้วค่อยพาไปลิงก์บัตรจริง ลิงก์จริงไม่ถูกส่งออกไปในข้อความ
     const gateUrl = pointGateUrl(sid);
     const res = pushCardOrText(lineIds, buildPointFlex(date, String(row.Location || "").trim(), gateUrl),
       `🏸 ขอบคุณพี่คนเก่ง (${formatThaiDate(date)})\nรับแต้มสะสม แล้วมาตบฟรีได้เลย 🎁\n${gateUrl}`);
+    console.log(`pointReminderNotify: รอบ ${sid} ส่งถึง ${lineIds.length} คน ผลจาก LINE = ${res.code}`);
     if (res.code === 200) markSent(key);
   });
+  if (!found) console.log("pointReminderNotify: ไม่มีรอบที่เล่นวันนี้ (หรือรอบถูกงด) ตรวจวันที่ของรอบในชีท Sessions");
 }
 
 // ทริกเกอร์ 10:00 (ต่อจาก dailyAdminNotify): ถึงวันหมดอายุของลิงก์รับแต้ม → แจ้งแอดมินให้ไปใส่ลิงก์ใหม่/วันหมดอายุใหม่ในหน้าตั้งค่า

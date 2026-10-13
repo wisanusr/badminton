@@ -57,7 +57,7 @@ function fixture() {
 
 function load(files) {
   const world = fixture();
-  const ctx = vm.createContext({ ...world.globals, console: { ...console, warn() {} } });
+  const ctx = vm.createContext({ ...world.globals, console: { ...console, warn() {}, log() {} } });
   files.forEach(f => vm.runInContext(fs.readFileSync(f, 'utf8'), ctx, { filename: f }));
   const G = name => vm.runInContext(name, ctx);
   return { world, G, sheets: world.sheets };
