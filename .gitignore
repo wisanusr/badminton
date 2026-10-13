@@ -1,0 +1,18 @@
+# dependencies / build output
+node_modules/
+_site/
+
+# clasp: per-developer Apps Script link (copy .clasp.json.example)
+.clasp.json
+.clasprc.json
+
+# local files
+.env
+*.local
+.DS_Store
+Thumbs.db
+
+# editor / tool state
+.vscode/
+.idea/
+.claude/
