@@ -38,11 +38,19 @@ function fixture() {
     Users: mkSheet([['User_ID', 'DisplayName', 'Skill_Level', 'Profile_Pic', 'Join_Date', 'Line_UID'],
       ['U1', 'Alice', 'C', '', '', 'Ua'], ['U2', 'Bob', 'C', '', '', 'Ub'],
       ['U3', 'Carol', 'C', '', '', ''], ['U4', 'Admin', 'C', '', '', 'Uadmin']]),
-    Sessions: mkSheet([['Session_ID', 'Date', 'Type', 'Location', 'Status', 'Cost', 'Calculated_Price_Per_Head', 'Task1', 'Task2', 'Task3', 'Task4'],
+    Sessions: mkSheet([['Session_ID', 'Date', 'Type', 'Location', 'Status', 'Cost', 'Calculated_Price_Per_Head', 'Task1', 'Task2', 'Task3', 'Task4', 'Task5'],
       ['S1', inDays(1), 'Workday', 'Court A', 'Open', 200],   // workday tomorrow, 18-19 already full (8)
       ['S2', inDays(1), 'Weekend', 'Court B', 'Open', 240],   // weekend tomorrow -> registration closed (<2 days)
-      ['S3', inDays(10), 'Weekend', 'Court B', 'Open', 240]]), // weekend in 10 days -> open
-    Registrations: mkSheet([regHeader, ...full, [1, 'S3', 'U3', 'All', false, 'Unpaid']])
+      ['S3', inDays(10), 'Weekend', 'Court B', 'Open', 240],  // weekend in 10 days -> open
+      // history (columns: ..., Task1, Task2, Task3, Task4, Task5)
+      ['S9',  inDays(-100), 'Workday', 'Old A', 'Open', 200, '', '', true, true, true, true],       // old, checklist done   -> trimmed
+      ['S10', inDays(-100), 'Workday', 'Old B', 'Open', 200, '', '', true, '', true, true],        // old, Task3 pending    -> kept
+      ['S11', inDays(-100), 'Workday', 'Old C', 'Cancelled', 200, '', '', '', '', '', ''],         // old, cancelled        -> trimmed
+      ['S12', inDays(-20), 'Workday', 'Recent', 'Open', 200, '', '', true, true, true, true],  // recent, done          -> kept (inside the 30-day window)
+      ['S13', '', 'Workday', 'No date', 'Open', 200]]),                                            // no date               -> trimmed
+    Registrations: mkSheet([regHeader, ...full, [1, 'S3', 'U3', 'All', false, 'Unpaid'],
+      [1, 'S9', 'U1', 'All', false, 'Paid'], [1, 'S10', 'U1', 'All', false, 'Unpaid'],
+      [1, 'S11', 'U2', 'All', false, 'Unpaid'], [1, 'S12', 'U2', 'All', false, 'Paid']])
   };
   return mkWorld({ sheets, tokens });
 }
@@ -219,6 +227,43 @@ test('cache: the quorum trigger clears it when it cancels a session', ({ G, shee
   G('checkWeekendQuorum')(); // S2 is a weekend session tomorrow with no players -> cancelled
   assert.strictEqual(sheets.Sessions.rows[2][4], 'Cancelled');
   assert.strictEqual(h('getAllData', {}, null).data.sessions.find(s => s.Session_ID === 'S2').Status, 'Cancelled');
+});
+
+const sessionIds = d => d.sessions.map(s => s.Session_ID).sort().join(',');
+
+test('getAllData: sends upcoming, recent and checklist-pending sessions only', ({ G }) => {
+  const d = G('handleRequest')('getAllData', {}, null).data;
+  assert.strictEqual(sessionIds(d), 'S1,S10,S12,S2,S3');
+  const regSessions = [...new Set(d.registrations.map(r => r.Session_ID))].sort().join(',');
+  assert.strictEqual(regSessions, 'S1,S10,S12,S3', 'registrations of trimmed sessions are not sent');
+  assert.strictEqual(d.users.length, 4, 'all users are still sent (names, profile picker)');
+});
+
+test('getAllData: a pending old session drops out once its checklist is complete', ({ G }) => {
+  const h = G('handleRequest');
+  assert(sessionIds(h('getAllData', {}, null).data).includes('S10'));
+  h('updateTask', { session_id: 'S10', tasks: { Task3: true } }, 'tokAdmin');
+  assert(!sessionIds(h('getAllData', {}, null).data).includes('S10'));
+});
+
+test('adminGetHistory: admins get every session and registration, others are refused', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const d = h('adminGetHistory', {}, 'tokAdmin').data;
+  assert.strictEqual(sessionIds(d), 'S1,S10,S11,S12,S13,S2,S3,S9');
+  assert.strictEqual(d.registrations.length, sheets.Registrations.rows.length - 1);
+  expectCode(() => h('adminGetHistory', {}, 'tokA'), 'FORBIDDEN');
+  expectCode(() => h('adminGetHistory', {}, null), 'AUTH_REQUIRED');
+});
+
+test('adminGetHistory: not cached (sees sheet edits at once) and larger than the trimmed payload', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const trimmed = h('getAllData', {}, null).data;
+  const before = h('adminGetHistory', {}, 'tokAdmin').data;
+  sheets.Registrations.appendRow([4, 'S9', 'U3', 'All', false, 'Unpaid']); // direct edit, no API write -> getAllData cache untouched
+  const after = h('adminGetHistory', {}, 'tokAdmin').data;
+  assert.strictEqual(after.registrations.length, before.registrations.length + 1);
+  assert(before.sessions.length > trimmed.sessions.length);
+  assert(before.registrations.length > trimmed.registrations.length);
 });
 
 test('adminUpdateRegistrations: delta keeps other people, no duplicates', ({ G, sheets }) => {

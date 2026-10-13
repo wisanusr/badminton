@@ -4,7 +4,7 @@
 const LEGACY_SETTINGS = ["PRICE_WORKDAY", "PRICE_HOLIDAY", "MAX_WORKDAY_INITIAL", "MAX_WORKDAY_EXTENDED"];
 const HIDDEN_SETTINGS = ["ADMIN_PASS", "ADMIN_LINE_IDS", "LINE_CHANNEL_ID"].concat(LEGACY_SETTINGS);
 
-const ALL_DATA_CACHE_KEY = "all_data_v2"; // เปลี่ยนเลขเมื่อโครงสร้าง payload เปลี่ยน (v2 เพิ่ม rules, limits)
+const ALL_DATA_CACHE_KEY = "all_data_v3"; // เปลี่ยนเลขเมื่อโครงสร้าง payload เปลี่ยน (v2 เพิ่ม rules/limits, v3 ตัดรอบเก่า)
 
 const ALL_DATA_TTL = 300; // วินาที ล้างทุกครั้งที่เขียนผ่าน API/trigger ส่วนการแก้ชีทด้วยมือจะเห็นผลภายในเวลานี้ (หรือรัน clearDataCache)
 
@@ -26,9 +26,32 @@ function getAllDataCached(ss) {
   return data;
 }
 
+// ช่วงที่หน้าแรกต้องใช้: รอบข้างหน้า + รอบที่เพิ่งผ่านไปไม่เกิน RECENT_DAYS วัน + รอบเก่ากว่านั้นที่ยังค้างเช็คลิสต์
+// (แอดมินเห็นเป็น "รอสรุปยอด") ประวัติทั้งหมดดึงแยกผ่าน adminGetHistory ตอนแอดมินเปิดหน้า "จัดการข้อมูล"
+const RECENT_DAYS = 30;
+const CHECKLIST_TASKS = ["Task2", "Task3", "Task4", "Task5"]; // ต้องตรงกับ TASKS ใน index.html
+
+function isCurrentSession(s) {
+  const d = toSessionDate(s.Date);
+  if (!d) return false; // วันที่ว่าง/ผิดรูปแบบ: หน้าแรกไม่แสดงอยู่แล้ว (ยังเห็นในประวัติของแอดมิน)
+  if (daysUntil(d) >= -RECENT_DAYS) return true;
+  return String(s.Status).trim() !== "Cancelled" && !CHECKLIST_TASKS.every(k => isTruthy(s[k]));
+}
+
+// รอบและรายชื่อทั้งหมดในชีท (ไม่ตัด)
+function getHistory(ss) {
+  return {
+    sessions: getSheetDataAsJSON(ss.getSheetByName("Sessions")).filter(s => s.Session_ID),
+    registrations: getSheetDataAsJSON(ss.getSheetByName("Registrations")).filter(r => r.Session_ID)
+  };
+}
+
 function getAllData(ss) {
-  const sessions = getSheetDataAsJSON(ss.getSheetByName("Sessions")).filter(s => s.Session_ID);
-  const registrations = getSheetDataAsJSON(ss.getSheetByName("Registrations")).filter(r => r.Session_ID);
+  const all = getHistory(ss);
+  const sessions = all.sessions.filter(isCurrentSession);
+  const keep = {};
+  sessions.forEach(s => { keep[String(s.Session_ID).trim()] = true; });
+  const registrations = all.registrations.filter(r => keep[String(r.Session_ID).trim()]);
 
   // ไม่ส่ง LINE userId ออกไป ส่งแค่ว่าผูกแล้วหรือยัง
   const users = getSheetDataAsJSON(ss.getSheetByName("Users")).filter(u => u.User_ID).map(u => {

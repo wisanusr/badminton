@@ -937,6 +937,7 @@
             const [sessions, setSessions] = useState([]);
             const [allRegistrations, setAllRegistrations] = useState([]);
             const [appSettings, setAppSettings] = useState({});
+            const [history, setHistory] = useState(null);           // ประวัติรอบ/รายชื่อทั้งหมด (โหลดเฉพาะแอดมินตอนเปิดหน้าจัดการข้อมูล)
             const [serverRules, setServerRules] = useState(null);   // กติกาที่ server ตรวจช่วงแล้ว
             const [ruleLimits, setRuleLimits] = useState({});       // ช่วงค่าที่ยอมรับของแต่ละคีย์ (ใช้กับช่องกรอก)
 
@@ -1049,6 +1050,16 @@
                     setLoading(false);
                 }
             };
+
+            // หน้าแรกได้เฉพาะรอบล่าสุดจาก getAllData หน้า "จัดการข้อมูล" ของแอดมินต้องเห็นทุกรอบ จึงดึงประวัติแยกต่างหาก
+            // (ถ้า server ยังไม่รองรับ จะใช้ข้อมูลที่มีอยู่ต่อไป)
+            const fetchHistory = async () => {
+                try {
+                    const r = await sendApiRequest("adminGetHistory");
+                    if (r.status === "success") setHistory(r.data);
+                } catch (e) { showToast('โหลดประวัติรอบไม่ได้: ' + e.message, 'error'); }
+            };
+            const refreshAdminData = async () => { await fetchAllData(); await fetchHistory(); };
 
             // เรียก action ที่เขียนข้อมูล แล้วโหลดข้อมูลใหม่
             const runAction = async (action, payload, okMessage) => {
@@ -1493,7 +1504,7 @@
                                     <div className="text-[13px] text-gray-500">{isAdminUser ? 'แอดมิน' : 'สมาชิก'}</div>
                                 </div>
                                 {isAdminUser && (
-                                    <button onClick={() => { scrollPositionRef.current = 0; setShowAdminPage(true); }}
+                                    <button onClick={() => { scrollPositionRef.current = 0; setShowAdminPage(true); fetchHistory(); }}
                                         className="shrink-0 px-4 h-8 rounded-full bg-gray-200/80 text-[15px] font-medium text-black active:opacity-70">จัดการข้อมูล</button>
                                 )}
                             </div>
@@ -1851,8 +1862,9 @@
                     <Toast message={toast.message} type={toast.type} />
                     {submitting && <GlobalLoader />}
                     {showAdminPage && isAdminUser
-                        ? <AdminPanel sessions={sessions} users={users} registrations={allRegistrations} limits={ruleLimits}
-                            sendApiRequest={sendApiRequest} onChanged={fetchAllData} onClose={() => setShowAdminPage(false)} showToast={showToast} />
+                        ? <AdminPanel sessions={history ? history.sessions : sessions} users={users}
+                            registrations={history ? history.registrations : allRegistrations} limits={ruleLimits}
+                            sendApiRequest={sendApiRequest} onChanged={refreshAdminData} onClose={() => setShowAdminPage(false)} showToast={showToast} />
                         : selected ? renderDetail() : renderHome()}
                 </div>
             );

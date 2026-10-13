@@ -44,6 +44,12 @@ function handleRequest(action, payload, idToken) {
 
   if (action === "me") return getMe(ss, line);
 
+  // อ่านอย่างเดียว ไม่ต้องถือ lock: ประวัติรอบ/รายชื่อทั้งหมดสำหรับหน้า "จัดการข้อมูล" ของแอดมิน (ไม่ผ่าน cache)
+  if (action === "adminGetHistory") {
+    requireAdmin(ss, line);
+    return { status: "success", data: getHistory(ss) };
+  }
+
   // งานแจ้งเตือนรันหลังปลดล็อก คนอื่นจะได้ไม่ต้องรอ และถ้าส่งไม่สำเร็จก็ไม่กระทบการยกเลิก
   const ctx = { afterUnlock: null };
   const lock = LockService.getScriptLock();
