@@ -116,6 +116,9 @@ function dispatchWrite(ss, line, action, payload, ctx) {
     case "adminUnlinkUser":
       requireAdmin(ss, line);
       return adminUnlinkUser(ss, payload);
+    case "adminMergeUsers":
+      requireAdmin(ss, line);
+      return adminMergeUsers(ss, payload);
     case "adminDeleteUser":
       requireAdmin(ss, line);
       return adminDeleteUser(ss, payload);

@@ -38,7 +38,7 @@ function fixture() {
     Users: mkSheet([['User_ID', 'DisplayName', 'Skill_Level', 'Profile_Pic', 'Join_Date', 'Line_UID'],
       ['U1', 'Alice', 'C', '', '', 'Ua'], ['U2', 'Bob', 'C', '', '', 'Ub'],
       ['U3', 'Carol', 'C', '', '', ''], ['U4', 'Admin', 'C', '', '', 'Uadmin']]),
-    Sessions: mkSheet([['Session_ID', 'Date', 'Type', 'Location', 'Status', 'Cost', 'Calculated_Price_Per_Head', 'Task1', 'Task2', 'Task3', 'Task4', 'Task5'],
+    Sessions: mkSheet([['Session_ID', 'Date', 'Type', 'Location', 'Status', 'Cost', 'Calculated_Price_Per_Head', 'Task1', 'Task2', 'Task3', 'Task4', 'Task5', 'Point_URL'],
       ['S1', inDays(1), 'Workday', 'Court A', 'Open', 200],   // workday tomorrow, 18-19 already full (8)
       ['S2', inDays(1), 'Weekend', 'Court B', 'Open', 240],   // weekend tomorrow -> registration closed (<2 days)
       ['S3', inDays(10), 'Weekend', 'Court B', 'Open', 240],  // weekend in 10 days -> open
@@ -329,6 +329,100 @@ test('notifications: sent markers older than 7 days are pruned', ({ G, world }) 
   G('pruneSentMarkers')();
   assert(!world.props.has('post_S1_old') && !world.props.has('book_S9_legacy'));
   assert(world.props.has('post_S1_new') && world.props.has('LINE_MESSAGING_TOKEN'));
+});
+
+test('updateTask: Point_URL accepts https or empty, rejects anything else', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const col = sheets.Sessions.rows[0].indexOf('Point_URL');
+  h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: ' https://lin.ee/abc ' }, 'tokAdmin');
+  assert.strictEqual(sheets.Sessions.rows[3][col], 'https://lin.ee/abc');
+  expectCode(() => h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: 'javascript:alert(1)' }, 'tokAdmin'), 'BAD_INPUT');
+  expectCode(() => h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: '=HYPERLINK("x")' }, 'tokAdmin'), 'BAD_INPUT');
+  h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: '' }, 'tokAdmin');
+  assert.strictEqual(sheets.Sessions.rows[3][col], '');
+  expectCode(() => h('updateTask', { session_id: 'S3', task_key: 'Point_URL', task_value: 'https://x.y' }, 'tokA'), 'FORBIDDEN');
+});
+
+test('getAllData: Point_URL is never sent, only Has_Point_URL', ({ G, sheets }) => {
+  const col = sheets.Sessions.rows[0].indexOf('Point_URL');
+  sheets.Sessions.rows[3][col] = 'https://lin.ee/secret';
+  G('clearDataCache')();
+  const d = G('handleRequest')('getAllData', {}, null).data;
+  const s3 = d.sessions.find(s => s.Session_ID === 'S3');
+  assert.strictEqual(s3.Has_Point_URL, true);
+  assert(!('Point_URL' in s3) && !JSON.stringify(d).includes('lin.ee/secret'));
+  assert.strictEqual(d.sessions.find(s => s.Session_ID === 'S2').Has_Point_URL, false);
+});
+
+test('pointReminderNotify: only today sessions with a link, linked players once, retried until LINE accepts', ({ G, world, sheets }) => {
+  const sent = [];
+  let status = 500;
+  world.globals.UrlFetchApp.fetch = (url, opts) => {
+    sent.push(JSON.parse(opts.payload));
+    return { getResponseCode: () => status, getContentText: () => '{}' };
+  };
+  world.props.set('LINE_MESSAGING_TOKEN', 't');
+  const link = 'https://lin.ee/pt';
+  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200, '', '', '', '', '', '', link]);   // today + link
+  sheets.Sessions.rows.push(['T2', inDays(0), 'Workday', 'B', 'Open', 200, '', '', '', '', '', '', '']);     // today, no link
+  sheets.Sessions.rows.push(['T3', inDays(1), 'Workday', 'C', 'Open', 200, '', '', '', '', '', '', link]);   // tomorrow
+  sheets.Sessions.rows.push(['T4', inDays(0), 'Workday', 'D', 'Cancelled', 200, '', '', '', '', '', '', link]); // cancelled
+  ['T1', 'T2', 'T3', 'T4'].forEach(sid => ['U1', 'U3', 'U2'].forEach(u => sheets.Registrations.appendRow([1, sid, u, 'All', false, 'Unpaid'])));
+  G('pointReminderNotify')();
+  assert.strictEqual(sent.length, 1, 'one multicast for T1 only');
+  assert.deepStrictEqual(sent[0].to.sort(), ['Ua', 'Ub'], 'U3 has no LINE id');
+  assert(sent[0].messages[0].text.includes(link));
+  status = 200;
+  G('pointReminderNotify')();   // first send failed -> retried
+  assert.strictEqual(sent.length, 2);
+  G('pointReminderNotify')();   // now marked -> not sent again
+  assert.strictEqual(sent.length, 2);
+});
+
+test('adminSaveSession: point_url saved, cleared, left alone when omitted, validated', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const base = { session_id: 'S3', date: '2030-01-05', type: 'Weekend', location: 'Court B', status: 'Open', cost: 240 };
+  const col = () => sheets.Sessions.rows[0].indexOf('Point_URL');
+  h('adminSaveSession', { ...base, point_url: 'https://lin.ee/a' }, 'tokAdmin');
+  assert.strictEqual(sheets.Sessions.rows[3][col()], 'https://lin.ee/a');
+  h('adminSaveSession', { ...base, cost: 250 }, 'tokAdmin'); // history not loaded yet in the UI -> field omitted
+  assert.strictEqual(sheets.Sessions.rows[3][col()], 'https://lin.ee/a', 'omitted point_url keeps the existing link');
+  expectCode(() => h('adminSaveSession', { ...base, point_url: 'http://insecure' }, 'tokAdmin'), 'BAD_INPUT');
+  h('adminSaveSession', { ...base, point_url: '' }, 'tokAdmin');
+  assert.strictEqual(sheets.Sessions.rows[3][col()], '');
+  h('adminSaveSession', { date: '2030-02-02', type: 'Workday', location: 'New', status: 'Open', cost: 200, point_url: 'https://lin.ee/n' }, 'tokAdmin');
+  assert.strictEqual(sheets.Sessions.rows[sheets.Sessions.rows.length - 1][col()], 'https://lin.ee/n');
+});
+
+test('adminSaveSession: type is derived from the date (Sat/Sun = Weekend)', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  const add = date => {
+    h('adminSaveSession', { date, location: 'X', status: 'Open', cost: 200 }, 'tokAdmin');
+    return sheets.Sessions.rows[sheets.Sessions.rows.length - 1][2];
+  };
+  assert.strictEqual(add('2030-01-05'), 'Weekend'); // Saturday
+  assert.strictEqual(add('2030-01-06'), 'Weekend'); // Sunday
+  assert.strictEqual(add('2030-01-07'), 'Workday'); // Monday
+  assert.strictEqual(add('2030-01-11'), 'Workday'); // Friday
+});
+
+test('adminMergeUsers: keeps the old id, takes the LINE link + registrations, skips duplicate sessions', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  sheets.Registrations.appendRow([1, 'S3', 'U1', 'All', false, 'Unpaid']); // U1 also in S3 where U3 already is
+  const regCount = (u) => sheets.Registrations.rows.slice(1).filter(r => r[2] === u).length;
+  expectCode(() => h('adminMergeUsers', { keep_id: 'U2', merge_id: 'U1' }, 'tokAdmin'), 'BAD_INPUT'); // both linked
+  expectCode(() => h('adminMergeUsers', { keep_id: 'U3', merge_id: 'U3' }, 'tokAdmin'), 'BAD_INPUT');
+  expectCode(() => h('adminMergeUsers', { keep_id: 'U3', merge_id: 'nope' }, 'tokAdmin'), 'NOT_FOUND');
+  expectCode(() => h('adminMergeUsers', { keep_id: 'U3', merge_id: 'U1' }, 'tokA'), 'FORBIDDEN');
+  const before = regCount('U1') + regCount('U3');
+  h('adminMergeUsers', { keep_id: 'U3', merge_id: 'U1' }, 'tokAdmin');
+  const users = sheets.Users.rows;
+  const lineCol = users[0].indexOf('Line_UID');
+  assert(!users.some(r => r[0] === 'U1'), 'merged account is gone');
+  assert.strictEqual(users.find(r => r[0] === 'U3')[lineCol], 'Ua', 'old profile now carries the LINE link');
+  assert.strictEqual(regCount('U1'), 0);
+  assert.strictEqual(regCount('U3'), before - 1, 'S3 duplicate dropped, others moved');
+  assert.strictEqual(sheets.Registrations.rows.slice(1).filter(r => r[1] === 'S3' && r[2] === 'U3').length, 1);
 });
 
 // ---------- runner ----------

@@ -19,6 +19,7 @@ function initialSetup() {
 
   ensureColumn(ss.getSheetByName("Users"), "Line_UID");
   ensureColumn(ss.getSheetByName("Sessions"), "Task5"); // เช็คลิสต์ "โอนเงินเข้าบัญชี"
+  ensureColumn(ss.getSheetByName("Sessions"), "Point_URL"); // ลิงก์สแกนเก็บแต้มของรอบ ส่งให้ผู้เล่น 21:00
   ensureSetting(ss, "LINE_CHANNEL_ID", "", "Channel ID ของ LINE Login channel (ใช้ตรวจ ID token)");
   ensureSetting(ss, "ADMIN_LINE_IDS", "", "LINE userId ของแอดมิน คั่นด้วยเครื่องหมาย ,");
   ensureSetting(ss, "NOTIFY_CANCEL", "TRUE", "แจ้งเตือนแอดมินทาง LINE เมื่อมีคนยกเลิกคิว (TRUE/FALSE)");
@@ -133,8 +134,9 @@ function ensureSetting(ss, key, value, desc) {
 //  - checkWeekendQuorum  ทุกวันช่วง 08:00-09:00
 //  - dailyAdminNotify    ทุกวันช่วง 10:00-11:00 (ข้อความโพสต์ในวันเล่น)
 //  - bookCourtNotify     ทุกวันช่วง 12:00-13:00 (แจ้งจำนวนคนรอบวันหยุดเพื่อจองคอร์ด)
+//  - pointReminderNotify ทุกวันช่วง 21:00-22:00 (ส่งลิงก์สแกนเก็บแต้มให้ผู้เล่นรอบที่แอดมินใส่ลิงก์ไว้)
 function setupTriggers() {
-  const handlers = ["checkWeekendQuorum", "dailyAdminNotify", "bookCourtNotify"];
+  const handlers = ["checkWeekendQuorum", "dailyAdminNotify", "bookCourtNotify", "pointReminderNotify"];
   ScriptApp.getProjectTriggers()
     .filter(t => handlers.indexOf(t.getHandlerFunction()) !== -1)
     .forEach(t => ScriptApp.deleteTrigger(t));
@@ -144,4 +146,6 @@ function setupTriggers() {
     .timeBased().everyDays(1).atHour(10).inTimezone("Asia/Bangkok").create();
   ScriptApp.newTrigger("bookCourtNotify")
     .timeBased().everyDays(1).atHour(12).inTimezone("Asia/Bangkok").create();
+  ScriptApp.newTrigger("pointReminderNotify")
+    .timeBased().everyDays(1).atHour(21).inTimezone("Asia/Bangkok").create();
 }
