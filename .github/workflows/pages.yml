@@ -27,10 +27,14 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Collect web files
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Build web page (precompile JSX + Tailwind, see scripts/build.mjs)
         run: |
-          mkdir _site
-          cp index.html _site/
+          npm ci
+          node scripts/build.mjs
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

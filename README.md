@@ -151,4 +151,8 @@ node tests/run.js
 
 ปัจจุบัน Pages เสิร์ฟทั้ง repo จาก branch `main` (ทำให้โค้ด backend เปิดอ่านได้ที่ `/backend/*.gs` ด้วย)
 ถ้าอยากเผยแพร่เฉพาะ `index.html`: ตั้ง repository variable `PAGES_VIA_ACTIONS` = `true` แล้วเปลี่ยน Settings → Pages → Source เป็น **GitHub Actions**
-(workflow [`pages.yml`](.github/workflows/pages.yml) จะ deploy เฉพาะ `index.html`)
+(workflow [`pages.yml`](.github/workflows/pages.yml) จะ deploy เฉพาะหน้าเว็บ)
+
+การ deploy ด้วย Actions จะ **build ล่วงหน้า** ด้วย [`scripts/build.mjs`](scripts/build.mjs): คอมไพล์ JSX และสร้าง CSS ของ Tailwind แล้วฝังในหน้าเดียว
+หน้าเว็บจึงไม่ต้องโหลดและรัน Babel + Tailwind CDN ในเบราว์เซอร์ทุกครั้ง (เปิดเร็วขึ้นโดยเฉพาะบนมือถือ) แก้ `index.html` ตามปกติ ไม่ต้อง build เอง
+ลองในเครื่อง: `npm ci && npm run build` ได้ไฟล์ `_site/index.html` ส่วน Pages แบบเสิร์ฟจาก branch ตรงๆ จะยังใช้ `index.html` ต้นฉบับ (ไม่ผ่านการ build)
