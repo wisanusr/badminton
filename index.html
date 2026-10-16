@@ -15,6 +15,12 @@
     <link rel="preconnect" href="https://script.google.com">
     <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
     <link rel="preconnect" href="https://access.line.me">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- ฟอนต์ผ่าน <link> (เดิมใช้ @import ใน <style> ซึ่งต้องรอ CSS หลักก่อนจึงเริ่มโหลด) -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
     <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script>
@@ -26,9 +32,6 @@
     <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.10/babel.min.js"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap');
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap');
-
         body { font-family: 'Google Sans', 'Noto Sans Thai', sans-serif; background: #F2F2F7; -webkit-tap-highlight-color: transparent; }
         .animate-in { animation: animateIn 0.35s ease-out; }
         @keyframes animateIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -81,6 +84,29 @@
         const POINT_URL = "https://lin.ee/pIMi2X1";
         const LIFF_URL = `https://liff.line.me/${LIFF_ID}`;
         let liffReady = false;
+        // action เขียนต้องรอ LIFF พร้อม (มี token) ก่อนส่ง เพราะหน้าอาจแสดงข้อมูลจากแคชไปก่อนแล้ว ผู้ใช้กดลงชื่อได้ก่อน liff.init เสร็จ
+        let liffReadyResolve;
+        const liffReadyPromise = new Promise(r => { liffReadyResolve = r; });
+
+        // ---- แคชในเครื่อง (localStorage) ----
+        // เปิดแอปครั้งต่อไปแสดงข้อมูลล่าสุดทันที แล้วค่อยอัปเดตเมื่อ server ตอบ (ไม่เก็บ ID token) ใช้ไม่ได้ก็ข้ามไป (บางเบราว์เซอร์บล็อก storage)
+        // เปลี่ยน CACHE_VER เมื่อรูปแบบข้อมูลที่เก็บเปลี่ยน
+        const CACHE_VER = 1;
+        const CACHE_MAX_AGE = 7 * 24 * 3600 * 1000;
+        const cacheRead = (name) => {
+            try {
+                const o = JSON.parse(localStorage.getItem('bm_' + name) || 'null');
+                return o && o.v === CACHE_VER && Date.now() - o.t < CACHE_MAX_AGE ? o.d : null;
+            } catch (e) { return null; }
+        };
+        const cacheWrite = (name, data) => { try { localStorage.setItem('bm_' + name, JSON.stringify({ v: CACHE_VER, t: Date.now(), d: data })); } catch (e) {} };
+        const cacheClear = (name) => { try { localStorage.removeItem('bm_' + name); } catch (e) {} };
+        // อ่านครั้งเดียวตอนโหลดหน้า ใช้เป็นค่าเริ่มต้นของ state ให้วาดหน้าแรกได้ทันที (หน้า public ไม่ใช้ข้อมูลผู้ใช้)
+        const BOOT = (() => {
+            const isPublic = new URLSearchParams(window.location.search).get('public') === 'true';
+            const me = isPublic ? null : cacheRead('me');
+            return { data: cacheRead('data'), me: me && me.user ? me : null };
+        })();
 
         // ค่าเริ่มต้นของกติกา (ค่าจริงอ่านจากชีท Settings ชุดเดียวกับ backend/Rules.gs)
         const DEFAULT_RULES = {
@@ -1074,23 +1100,27 @@
         // ===================== App =====================
         function BadmintonApp() {
             // ---- data ----
-            const [users, setUsers] = useState([]);
-            const [sessions, setSessions] = useState([]);
-            const [allRegistrations, setAllRegistrations] = useState([]);
-            const [appSettings, setAppSettings] = useState({});
+            // ค่าเริ่มต้นมาจากแคชในเครื่อง (BOOT) ถ้ามี แล้วถูกแทนที่เมื่อ server ตอบ
+            const cachedData = BOOT.data || {};
+            const [users, setUsers] = useState(cachedData.users || []);
+            const [sessions, setSessions] = useState(cachedData.sessions || []);
+            const [allRegistrations, setAllRegistrations] = useState(cachedData.registrations || []);
+            const [appSettings, setAppSettings] = useState(cachedData.settings || {});
             const [history, setHistory] = useState(null);           // ประวัติรอบ/รายชื่อทั้งหมด (โหลดเฉพาะแอดมินตอนเปิดหน้าจัดการข้อมูล)
-            const [serverRules, setServerRules] = useState(null);   // กติกาที่ server ตรวจช่วงแล้ว
-            const [ruleLimits, setRuleLimits] = useState({});       // ช่วงค่าที่ยอมรับของแต่ละคีย์ (ใช้กับช่องกรอก)
+            const [serverRules, setServerRules] = useState(cachedData.rules || null);   // กติกาที่ server ตรวจช่วงแล้ว
+            const [ruleLimits, setRuleLimits] = useState(cachedData.limits || {});      // ช่วงค่าที่ยอมรับของแต่ละคีย์ (ใช้กับช่องกรอก)
+            const haveData = useRef(!!BOOT.data);                 // มีข้อมูลบนหน้าแล้ว (จากแคชหรือ server): โหลดซ้ำพลาดให้แจ้งเตือนเฉยๆ ไม่ต้องแทนที่ทั้งหน้า
 
             // ---- auth ----
-            const [currentUser, setCurrentUser] = useState(null);
-            const [lineProfile, setLineProfile] = useState(null);
-            const [isAdminUser, setIsAdminUser] = useState(false);
-            const [authLoading, setAuthLoading] = useState(true);
+            // ผู้ใช้จากแคช = แสดงไปก่อน ยืนยันกับ LINE/server ทีหลัง (action เขียนทุกตัว server ตรวจสิทธิ์จากชีทเองเสมอ)
+            const [currentUser, setCurrentUser] = useState(BOOT.me ? BOOT.me.user : null);
+            const [lineProfile, setLineProfile] = useState(BOOT.me ? BOOT.me.line : null);
+            const [isAdminUser, setIsAdminUser] = useState(BOOT.me ? !!BOOT.me.user.isAdmin : false);
+            const [authLoading, setAuthLoading] = useState(!BOOT.me);
             const [publicViewMode, setPublicViewMode] = useState(false);
 
             // ---- ui ----
-            const [loading, setLoading] = useState(true);
+            const [loading, setLoading] = useState(!BOOT.data);
             const [globalError, setGlobalError] = useState(null);
             const [claim, setClaim] = useState(readClaimParam);   // ผู้เล่นกดการ์ดแต้ม: เช็กสิทธิ์แล้วค่อยเปิดลิงก์แต้มจริง
             const [submitting, setSubmitting] = useState(false);
@@ -1132,6 +1162,7 @@
             // ID token ของ LINE มีอายุ ~1 ชม. ถ้าหมดอายุไม่รีโหลดกลางงานเอง ให้ผู้ใช้เลือกว่าจะเข้าสู่ระบบใหม่ตอนไหน
             const askRelogin = (auto) => {
                 if (auto || window.confirm('เซสชัน LINE หมดอายุ ต้องเข้าสู่ระบบใหม่\n(สิ่งที่ยังไม่ได้บันทึกจะหาย) เข้าสู่ระบบตอนนี้เลยไหม?')) {
+                    cacheClear('me');
                     liff.logout();
                     liff.login({ redirectUri: window.location.href });
                 }
@@ -1150,6 +1181,7 @@
 
             const sendApiRequest = async (action, payload = null) => {
                 const isRead = action === 'me' || action === 'getAllData';
+                if (!isRead && !liffReady) await liffReadyPromise; // resolve เมื่อ liff.init จบ (สำเร็จหรือไม่) ถ้าไม่ได้ล็อกอิน server จะตอบ AUTH_REQUIRED เหมือนเดิม
                 if (!isRead && liffReady) {
                     const decoded = liff.getDecodedIDToken && liff.getDecodedIDToken();
                     if (decoded && decoded.exp && decoded.exp - Math.floor(Date.now() / 1000) < 30) throw askRelogin();
@@ -1196,11 +1228,16 @@
                         setAppSettings(result.data.settings || {});
                         setServerRules(result.data.rules || null);
                         setRuleLimits(result.data.limits || {});
+                        haveData.current = true;
+                        cacheWrite('data', result.data);
+                    } else if (haveData.current) {
+                        showToast("อัปเดตข้อมูลไม่ได้: " + result.message, 'error');
                     } else {
                         setGlobalError("โหลดข้อมูลไม่ได้: " + result.message);
                     }
                 } catch (e) {
-                    setGlobalError("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: " + e.message);
+                    if (haveData.current) showToast("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: " + e.message, 'error');
+                    else setGlobalError("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: " + e.message);
                 } finally {
                     setLoading(false);
                 }
@@ -1265,17 +1302,32 @@
                             return;
                         }
                         liffReady = true;
-                        // รายการโหลดไปแล้วตั้งแต่ต้น (ด้านบน) รอแค่ "me" ก่อนเข้าแอป
+                        liffReadyResolve();
+                        const decoded = liff.getDecodedIDToken && liff.getDecodedIDToken();
+                        const uid = decoded && decoded.sub;
+                        // แคชผู้ใช้เป็นของบัญชี LINE อื่น (หรือยืนยันไม่ได้): ทิ้ง กลับไปหน้ารอแล้วเข้าสู่ระบบตามปกติ
+                        if (BOOT.me && BOOT.me.uid !== uid) {
+                            cacheClear('me');
+                            setCurrentUser(null); setLineProfile(null); setIsAdminUser(false); setAuthLoading(true);
+                        }
+                        // รายการโหลดไปแล้วตั้งแต่ต้น (ด้านบน) รอแค่ "me" ก่อนเข้าแอป (ถ้ามีผู้ใช้จากแคช หน้าแสดงอยู่แล้ว "me" แค่ยืนยัน/อัปเดต)
                         const me = await sendApiRequest("me");
                         if (me.status === "success") {
                             setLineProfile(me.data.line);
-                            if (me.data.user) applyUser(me.data.user);
+                            if (me.data.user) {
+                                applyUser(me.data.user);
+                                if (uid) cacheWrite('me', { uid, line: me.data.line, user: me.data.user });
+                            } else {
+                                setCurrentUser(null); setIsAdminUser(false); // ยังไม่มีโปรไฟล์ (หรือโปรไฟล์ถูกลบ)
+                                cacheClear('me');
+                            }
                         } else {
                             setGlobalError(me.message);
                         }
                     } catch (e) {
                         setGlobalError("เข้าสู่ระบบ LINE ไม่สำเร็จ: " + e.message);
                     } finally {
+                        liffReadyResolve(); // ถ้า init ล้มเหลว/ต้อง login ใหม่ ก็ไม่ให้ action เขียนที่รออยู่ค้าง
                         setAuthLoading(false);
                     }
                 })();
