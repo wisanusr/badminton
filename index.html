@@ -1647,45 +1647,31 @@
             const openAdminManager = () => {
                 setAmData(currentRegs.map(r => ({ ...r })));
                 setAmBase(currentRegs.map(r => ({ ...r })));
-                setAmExistingId("");
-                setAmNewName("");
-                setAmMode("member");
                 setAmWillCancel(info.isCancelled);
                 setShowAdminManager(true);
             };
 
-            const buildPendingAdd = () => {
-                const base = { Hours_Joined: 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() };
-                if (amExistingId) {
-                    const u = users.find(x => String(x.User_ID) === amExistingId);
-                    if (u) return { ...base, User_ID: String(u.User_ID), DisplayName: u.DisplayName };
-                }
-                const name = amNewName.trim();
-                if (!name) return null;
-                const same = users.find(x => String(x.DisplayName || '').toLowerCase() === name.toLowerCase());
-                if (same) return { ...base, User_ID: String(same.User_ID), DisplayName: same.DisplayName };
-                return { ...base, User_ID: 'NEW_' + Date.now(), DisplayName: name };
-            };
-
-            // แท็บ Guest: เพิ่ม guest n คนแบบรันเลข หรือแตะสมาชิกที่ยังไม่ผูก LINE เพื่อเพิ่มทันที
+            // ---------- กล่องเพิ่มผู้เล่น (แอดมิน) ใต้รายชื่อ: กดแล้วบันทึกทันที ----------
             const asReg = u => ({ User_ID: String(u.User_ID), DisplayName: u.DisplayName, Hours_Joined: 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() });
-            const handleAddGuests = n => setAmData([...amData, ...nextGuests(users, amData, n).map(asReg)]);
-            const handleQuickAdd = u => setAmData([...amData, asReg(u)]);
-
-            const handleAdminAdd = () => {
-                const row = buildPendingAdd();
-                if (!row) return;
-                if (amData.some(r => String(r.User_ID) === row.User_ID)) return showToast('มีชื่อนี้ในรอบแล้ว', 'error');
-                setAmData([...amData, row]);
-                setAmExistingId("");
-                setAmNewName("");
+            const addNow = async (list, okMsg) => {
+                if (!list.length) return false;
+                return runAction('adminUpdateRegistrations', { session_id: selectedSession.Session_ID, add: list.map(asReg), remove: [], update: [] }, okMsg);
+            };
+            const handleAddGuests = n => addNow(nextGuests(users, currentRegs, n), `เพิ่ม guest ${n} คนแล้ว`);
+            const handleQuickAdd = u => addNow([u], `เพิ่ม ${u.DisplayName} แล้ว`);
+            const handleAdminAdd = async () => {
+                let u = amExistingId ? users.find(x => String(x.User_ID) === amExistingId) : null;
+                if (!u) {
+                    const name = amNewName.trim();
+                    if (!name) return;
+                    u = users.find(x => String(x.DisplayName || '').toLowerCase() === name.toLowerCase()) || { User_ID: 'NEW_' + Date.now(), DisplayName: name };
+                }
+                if (currentRegs.some(r => String(r.User_ID) === String(u.User_ID))) return showToast('มีชื่อนี้ในรอบแล้ว', 'error');
+                if (await addNow([u], `เพิ่ม ${u.DisplayName} แล้ว`)) { setAmExistingId(""); setAmNewName(""); }
             };
 
             const handleAdminSave = async () => {
                 const data = [...amData];
-                const pending = buildPendingAdd();
-                if (pending && !data.some(r => String(r.User_ID) === pending.User_ID)) data.push(pending);
-
                 const statusChanged = amWillCancel !== info.isCancelled;
                 const d = diffRegs(amBase, data);
                 const playersChanged = d.add.length + d.remove.length + d.update.length > 0;
@@ -2022,6 +2008,71 @@
                                 )}
                             </div>
 
+                            {/* Admin: add players (saves immediately) */}
+                            {isAdminUser && (
+                                <div className="mb-8">
+                                    <SectionTitle>เพิ่มผู้เล่น (แอดมิน)</SectionTitle>
+                                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden pt-3">
+                                        <div className="px-3 mb-1">
+                                            <div className="flex bg-[#E9E9EA] rounded-[10px] p-0.5">
+                                                {[['member', 'สมาชิก'], ['guest', 'Guest']].map(([k, label]) => (
+                                                    <button key={k} onClick={() => { setAmMode(k); setAmExistingId(""); setAmNewName(""); }}
+                                                        className={`flex-1 py-1.5 rounded-[8px] text-[14px] font-semibold transition-colors ${amMode === k ? 'bg-white text-black shadow-sm' : 'text-gray-600'}`}>
+                                                        {label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        {amMode === 'guest' ? (
+                                            <div className="divide-y divide-gray-100">
+                                                <div className="p-4">
+                                                    <div className="text-[13px] text-gray-500 mb-2">เพิ่ม guest กี่คน (ถัดไป: {(nextGuests(users, currentRegs, 1)[0] || {}).DisplayName})</div>
+                                                    <div className="flex gap-2">
+                                                        {[1, 2, 3, 4, 5].map(n => (
+                                                            <button key={n} onClick={() => handleAddGuests(n)}
+                                                                className="flex-1 py-2.5 rounded-[10px] bg-[#FF9500]/10 text-[#FF9500] text-[17px] font-semibold active:bg-[#FF9500]/25">+{n}</button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                {unlinkedMembers(users, currentRegs).length > 0 && (
+                                                    <div className="p-4">
+                                                        <div className="text-[13px] text-gray-500 mb-2">สมาชิกที่ยังไม่ผูก LINE แตะเพื่อเพิ่ม</div>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {unlinkedMembers(users, currentRegs).map(u => (
+                                                                <button key={u.User_ID} onClick={() => handleQuickAdd(u)}
+                                                                    className="px-3 py-1.5 rounded-full bg-[#007AFF]/10 text-[#007AFF] text-[15px] font-medium active:bg-[#007AFF]/20">+ {u.DisplayName}</button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div className="divide-y divide-gray-100">
+                                                <div className="p-3 pl-4 flex items-center">
+                                                    <span className="text-[17px] text-black w-24">จากระบบ</span>
+                                                    <select value={amExistingId} onChange={e => { setAmExistingId(e.target.value); setAmNewName(""); }}
+                                                        className="flex-1 text-[17px] text-[#007AFF] bg-transparent outline-none text-right">
+                                                        <option value="">เลือก</option>
+                                                        {users.filter(u => !isGuestName(u.DisplayName))
+                                                            .sort((a, b) => String(a.DisplayName).localeCompare(String(b.DisplayName), 'th'))
+                                                            .map(u => <option key={u.User_ID} value={String(u.User_ID)}>{u.DisplayName}</option>)}
+                                                    </select>
+                                                </div>
+                                                <div className="p-3 pl-4 flex items-center">
+                                                    <span className="text-[17px] text-black w-24">ชื่อใหม่</span>
+                                                    <input type="text" placeholder="พิมพ์ชื่อ" value={amNewName}
+                                                        onChange={e => { setAmNewName(e.target.value); setAmExistingId(""); }}
+                                                        onKeyDown={e => { if (e.key === 'Enter') handleAdminAdd(); }}
+                                                        className="flex-1 min-w-0 text-[17px] text-[#007AFF] bg-transparent outline-none text-right placeholder-gray-300" />
+                                                </div>
+                                                <button onClick={handleAdminAdd} className="w-full p-3 text-[#007AFF] font-medium text-[17px] active:bg-gray-50">เพิ่มลงรายชื่อ</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <p className="text-[13px] text-gray-500 px-4 mt-2">แอดมินเพิ่มได้เกินโควตา ระบบไม่บล็อก</p>
+                                </div>
+                            )}
+
                             {/* Cost */}
                             {!si.isCancelled && (
                                 <>
@@ -2156,66 +2207,6 @@
                                                 </div>
                                             ))}
                                         </div>
-                                    </div>
-
-                                    <div className="mt-8">
-                                        <SectionTitle>เพิ่มผู้เล่น</SectionTitle>
-                                        <div className="px-4 mb-3">
-                                            <div className="flex bg-[#E9E9EA] rounded-[10px] p-0.5">
-                                                {[['member', 'สมาชิก'], ['guest', 'Guest']].map(([k, label]) => (
-                                                    <button key={k} onClick={() => { setAmMode(k); setAmExistingId(""); setAmNewName(""); }}
-                                                        className={`flex-1 py-1.5 rounded-[8px] text-[14px] font-semibold transition-colors ${amMode === k ? 'bg-white text-black shadow-sm' : 'text-gray-600'}`}>
-                                                        {label}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                        {amMode === 'guest' ? (
-                                            <div className="bg-white border-y border-gray-200 divide-y divide-gray-200">
-                                                <div className="p-4">
-                                                    <div className="text-[13px] text-gray-500 mb-2">เพิ่ม guest กี่คน (ถัดไป: {(nextGuests(users, amData, 1)[0] || {}).DisplayName})</div>
-                                                    <div className="flex gap-2">
-                                                        {[1, 2, 3, 4, 5].map(n => (
-                                                            <button key={n} onClick={() => handleAddGuests(n)}
-                                                                className="flex-1 py-2.5 rounded-[10px] bg-[#FF9500]/10 text-[#FF9500] text-[17px] font-semibold active:bg-[#FF9500]/25">+{n}</button>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                                {unlinkedMembers(users, amData).length > 0 && (
-                                                    <div className="p-4">
-                                                        <div className="text-[13px] text-gray-500 mb-2">สมาชิกที่ยังไม่ผูก LINE แตะเพื่อเพิ่ม</div>
-                                                        <div className="flex flex-wrap gap-2">
-                                                            {unlinkedMembers(users, amData).map(u => (
-                                                                <button key={u.User_ID} onClick={() => handleQuickAdd(u)}
-                                                                    className="px-3 py-1.5 rounded-full bg-[#007AFF]/10 text-[#007AFF] text-[15px] font-medium active:bg-[#007AFF]/20">+ {u.DisplayName}</button>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ) : (
-                                            <div className="bg-white border-y border-gray-200 divide-y divide-gray-200">
-                                                <div className="p-3 pl-4 flex items-center">
-                                                    <span className="text-[17px] text-black w-24">จากระบบ</span>
-                                                    <select value={amExistingId} onChange={e => { setAmExistingId(e.target.value); setAmNewName(""); }}
-                                                        className="flex-1 text-[17px] text-[#007AFF] bg-transparent outline-none text-right">
-                                                        <option value="">เลือก</option>
-                                                        {users.filter(u => !isGuestName(u.DisplayName))
-                                                            .sort((a, b) => String(a.DisplayName).localeCompare(String(b.DisplayName), 'th'))
-                                                            .map(u => <option key={u.User_ID} value={String(u.User_ID)}>{u.DisplayName}</option>)}
-                                                    </select>
-                                                </div>
-                                                <div className="p-3 pl-4 flex items-center">
-                                                    <span className="text-[17px] text-black w-24">ชื่อใหม่</span>
-                                                    <input type="text" placeholder="พิมพ์ชื่อ" value={amNewName}
-                                                        onChange={e => { setAmNewName(e.target.value); setAmExistingId(""); }}
-                                                        onKeyDown={e => { if (e.key === 'Enter') handleAdminAdd(); }}
-                                                        className="flex-1 min-w-0 text-[17px] text-[#007AFF] bg-transparent outline-none text-right placeholder-gray-300" />
-                                                </div>
-                                                <button onClick={handleAdminAdd} className="w-full p-3 text-[#007AFF] font-medium text-[17px] active:bg-gray-50">เพิ่มลงรายชื่อ</button>
-                                            </div>
-                                        )}
-                                        <p className="text-[13px] text-gray-500 px-4 mt-2">แอดมินเพิ่มได้เกินโควตา ระบบไม่บล็อก</p>
                                     </div>
 
                                     <div className="mt-8">
