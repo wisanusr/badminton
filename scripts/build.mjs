@@ -53,7 +53,9 @@ try {
 }
 
 // 4) Put the compiled app where the Babel tag was.
-html = html.replace('<div id="root"></div>', '<div id="root"></div>\n    <script>' + js.replace(/<\/script/gi, '<\\/script') + '</script>');
+// Callback form here too: minified JS can contain `$&` (e.g. `$&&x`), which a replacement string would expand.
+html = html.replace('<div id="root"></div>', () => '<div id="root"></div>\n    <script>' + js.replace(/<\/script/gi, '<\\/script') + '</script>');
+if (!html.includes(js.replace(/<\/script/gi, '<\\/script'))) throw new Error('compiled script was not inserted verbatim');
 
 mkdirSync(join(root, '_site'), { recursive: true });
 writeFileSync(join(root, '_site', 'index.html'), html);
