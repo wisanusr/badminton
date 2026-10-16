@@ -268,6 +268,7 @@
         const IconShield = ({ size = 16, className = "" }) => <Svg size={size} className={className}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></Svg>;
         const IconSearch = ({ size = 18, className = "" }) => <Svg size={size} className={className}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></Svg>;
         const IconTrash = ({ size = 16, className = "" }) => <Svg size={size} className={className}><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></Svg>;
+        const IconRefresh = ({ size = 16, className = "" }) => <Svg size={size} className={className}><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></Svg>;
         const IconLoader = ({ size = 24, className = "" }) => <Svg size={size} className={`animate-spin ${className}`}><path d="M21 12a9 9 0 1 1-6.219-8.56" /></Svg>;
 
         // ===================== Small components =====================
@@ -1109,6 +1110,8 @@
             const [history, setHistory] = useState(null);           // ประวัติรอบ/รายชื่อทั้งหมด (โหลดเฉพาะแอดมินตอนเปิดหน้าจัดการข้อมูล)
             const [serverRules, setServerRules] = useState(cachedData.rules || null);   // กติกาที่ server ตรวจช่วงแล้ว
             const [ruleLimits, setRuleLimits] = useState(cachedData.limits || {});      // ช่วงค่าที่ยอมรับของแต่ละคีย์ (ใช้กับช่องกรอก)
+            const fetchingRef = useRef(0);                       // จำนวน getAllData ที่กำลังดึงอยู่
+            const lastFetchAt = useRef(0);                       // เวลาที่ดึงข้อมูลสำเร็จครั้งล่าสุด (ใช้กับรีเฟรชอัตโนมัติ)
             const haveData = useRef(!!BOOT.data);                 // มีข้อมูลบนหน้าแล้ว (จากแคชหรือ server): โหลดซ้ำพลาดให้แจ้งเตือนเฉยๆ ไม่ต้องแทนที่ทั้งหน้า
 
             // ---- auth ----
@@ -1218,10 +1221,15 @@
                 }
             };
 
-            const fetchAllData = async () => {
+            // คืน true เมื่อได้ข้อมูลใหม่ { quiet } = รีเฟรชอัตโนมัติ: พลาดก็เงียบ (ยังมีข้อมูลเดิมบนหน้า)
+            const fetchAllData = async ({ quiet = false } = {}) => {
+                fetchingRef.current++;
+                let ok = false;
                 try {
                     const result = await sendApiRequest("getAllData");
                     if (result.status === "success") {
+                        ok = true;
+                        lastFetchAt.current = Date.now();
                         setSessions(result.data.sessions || []);
                         setUsers(result.data.users || []);
                         setAllRegistrations(result.data.registrations || []);
@@ -1231,16 +1239,18 @@
                         haveData.current = true;
                         cacheWrite('data', result.data);
                     } else if (haveData.current) {
-                        showToast("อัปเดตข้อมูลไม่ได้: " + result.message, 'error');
+                        if (!quiet) showToast("อัปเดตข้อมูลไม่ได้: " + result.message, 'error');
                     } else {
                         setGlobalError("โหลดข้อมูลไม่ได้: " + result.message);
                     }
                 } catch (e) {
-                    if (haveData.current) showToast("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: " + e.message, 'error');
+                    if (haveData.current) { if (!quiet) showToast("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: " + e.message, 'error'); }
                     else setGlobalError("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: " + e.message);
                 } finally {
+                    fetchingRef.current--;
                     setLoading(false);
                 }
+                return ok;
             };
 
             // หน้าแรกได้เฉพาะรอบล่าสุดจาก getAllData หน้า "จัดการข้อมูล" ของแอดมินต้องเห็นทุกรอบ จึงดึงประวัติแยกต่างหาก
@@ -1252,6 +1262,30 @@
                 } catch (e) { showToast('โหลดประวัติรอบไม่ได้: ' + e.message, 'error'); }
             };
             const refreshAdminData = () => Promise.all([fetchAllData(), fetchHistory()]); // ขนานกัน (ไม่พึ่งกัน) เร็วกว่าดึงทีละอัน
+
+            // ปุ่มรีเฟรชหน้าแรก
+            const [refreshing, setRefreshing] = useState(false);
+            const manualRefresh = async () => {
+                if (refreshing) return;
+                setRefreshing(true);
+                const ok = await fetchAllData();
+                setRefreshing(false);
+                if (ok) showToast('อัปเดตข้อมูลแล้ว');
+            };
+
+            // กลับมาที่แอป (สลับจากแชท LINE ฯลฯ) นานเกิน 30 วินาทีตั้งแต่ดึงล่าสุด → ดึงใหม่เงียบๆ
+            // ไม่ทำตอนมีการบันทึกค้างอยู่หรือแอดมินกำลังแก้ในหน้าจัดการ (ไม่ให้ข้อมูลใต้ฟอร์มเปลี่ยนกลางคัน) ตัวเช็กอ่านค่าล่าสุดผ่าน ref
+            const busyRef = useRef(false);
+            busyRef.current = submitting || showAdminPage || showAdminManager;
+            useEffect(() => {
+                const onVisible = () => {
+                    if (document.visibilityState !== 'visible') return;
+                    if (Date.now() - lastFetchAt.current < 30000 || fetchingRef.current > 0 || busyRef.current) return;
+                    fetchAllData({ quiet: true });
+                };
+                document.addEventListener('visibilitychange', onVisible);
+                return () => document.removeEventListener('visibilitychange', onVisible);
+            }, []);
 
             // เรียก action ที่เขียนข้อมูล แล้วโหลดข้อมูลใหม่
             const runAction = async (action, payload, okMessage) => {
@@ -1774,7 +1808,12 @@
                                 )}
                             </div>
 
-                            <SectionTitle>รอบที่กำลังจะมา</SectionTitle>
+                            <SectionTitle right={
+                                <button onClick={manualRefresh} disabled={refreshing} aria-label="รีเฟรชข้อมูล"
+                                    className="flex items-center gap-1 text-[13px] font-medium text-[#007AFF] active:opacity-60 disabled:opacity-50">
+                                    {refreshing ? <IconLoader size={14} /> : <IconRefresh size={14} />}<span>รีเฟรช</span>
+                                </button>
+                            }>รอบที่กำลังจะมา</SectionTitle>
 
                             <div className="flex flex-col gap-3 mb-8">
                                 {loading && sessionInfos.length === 0 ? (
