@@ -185,7 +185,24 @@
         // Guest = บุคคลภายนอกที่มาจอยครั้งคราว เก็บเป็น user ชื่อขึ้นต้นด้วย guest_
         const GUEST_PREFIX = 'guest_';
         const isGuestName = n => String(n || '').toLowerCase().startsWith(GUEST_PREFIX);
-        const guestLabel = n => isGuestName(n) ? String(n).slice(GUEST_PREFIX.length) : String(n || '');
+        const guestLabel = n => { if (!isGuestName(n)) return String(n || ''); const rest = String(n).slice(GUEST_PREFIX.length); return /^\d+$/.test(rest) ? 'guest ' + rest : rest; };
+        // เพิ่ม guest n คน ตั้งชื่อ guest_1, guest_2 ... ใช้เลขที่ยังว่างในรอบ และใช้ user guest_N เดิมถ้ามี (ไม่สร้างซ้ำ)
+        const nextGuests = (users, rows, n) => {
+            const inRound = new Set(rows.map(r => String(r.User_ID)));
+            const roundNames = new Set(rows.map(r => String(r.DisplayName || (users.find(u => String(u.User_ID) === String(r.User_ID)) || {}).DisplayName || '').toLowerCase()));
+            const out = [];
+            for (let k = 1; out.length < n && k < 1000; k++) {
+                const name = GUEST_PREFIX + k;
+                if (roundNames.has(name)) continue;
+                const u = users.find(x => String(x.DisplayName || '').toLowerCase() === name);
+                if (u && inRound.has(String(u.User_ID))) continue;
+                out.push(u ? { User_ID: String(u.User_ID), DisplayName: u.DisplayName } : { User_ID: 'NEW_' + Date.now() + '_' + k, DisplayName: name });
+            }
+            return out;
+        };
+        const unlinkedMembers = (users, rows) => users
+            .filter(u => u.User_ID && !u.Linked && !isGuestName(u.DisplayName) && !rows.some(r => String(r.User_ID) === String(u.User_ID)))
+            .sort((a, b) => String(a.DisplayName).localeCompare(String(b.DisplayName), 'th'));
         const inH1 = r => { const h = hoursOf(r); return h === "All" || h.startsWith("18:00") || h.startsWith("16:00"); };
         const inH2 = r => { const h = hoursOf(r); return h === "All" || h.startsWith("19:00") || h.startsWith("17:00"); };
 
@@ -806,19 +823,9 @@
                 setRegRows([...regRows, ...added]);
                 setRegPickOpen(false);
             };
-            const [regGuestName, setRegGuestName] = useState('');
-            const addGuestReg = u => {
-                if (regRows.some(r => String(r.User_ID) === String(u.User_ID))) return showToast('มีชื่อนี้ในรอบแล้ว', 'error');
-                setRegRows([...regRows, { User_ID: String(u.User_ID), DisplayName: u.DisplayName, Hours_Joined: 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() }]);
-            };
-            const addNewGuestReg = () => {
-                const typed = regGuestName.trim();
-                if (!typed) return;
-                const name = isGuestName(typed) ? typed : GUEST_PREFIX + typed;
-                const same = users.find(x => String(x.DisplayName || '').toLowerCase() === name.toLowerCase());
-                addGuestReg(same || { User_ID: 'NEW_' + Date.now(), DisplayName: name });
-                setRegGuestName('');
-            };
+            const asRegRow = u => ({ User_ID: String(u.User_ID), DisplayName: u.DisplayName, Hours_Joined: 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() });
+            const addGuestRegs = n => setRegRows([...regRows, ...nextGuests(users, regRows, n).map(asRegRow)]);
+            const addUnlinkedReg = u => setRegRows([...regRows, asRegRow(u)]);
             const saveRegs = async () => {
                 const d = diffRegs(regBase, regRows);
                 if (!d.add.length && !d.remove.length && !d.update.length) return showToast('ไม่มีการเปลี่ยนแปลง');
@@ -970,29 +977,24 @@
                                 </div>
                                 <button onClick={() => setRegPickOpen(true)} disabled={!regSession} className="w-full bg-white rounded-[14px] shadow-sm py-3 mb-3 text-[17px] text-[#007AFF] font-medium active:bg-gray-50 disabled:opacity-50">+ เพิ่มผู้เล่น</button>
                                 <div className="bg-white rounded-[20px] shadow-sm p-4 mb-3">
-                                    <div className="text-[13px] text-gray-500 mb-2">เพิ่ม Guest (คนนอก)</div>
-                                    {(() => {
-                                        const guests = users.filter(u => u.User_ID && isGuestName(u.DisplayName) && !regRows.some(r => String(r.User_ID) === String(u.User_ID)))
-                                            .sort((a, b) => String(a.DisplayName).localeCompare(String(b.DisplayName), 'th'));
-                                        return guests.length > 0 && (
-                                            <div className="flex flex-wrap gap-2 mb-3">
-                                                {guests.map(u => (
-                                                    <button key={u.User_ID} onClick={() => addGuestReg(u)} disabled={!regSession}
-                                                        className="px-3 py-1.5 rounded-full bg-[#FF9500]/10 text-[#FF9500] text-[15px] font-medium active:bg-[#FF9500]/25 disabled:opacity-50">
-                                                        + {guestLabel(u.DisplayName)}
-                                                    </button>
+                                    <div className="text-[13px] text-gray-500 mb-2">เพิ่ม guest กี่คน (ถัดไป: {(nextGuests(users, regRows, 1)[0] || {}).DisplayName})</div>
+                                    <div className="flex gap-2">
+                                        {[1, 2, 3, 4, 5].map(n => (
+                                            <button key={n} onClick={() => addGuestRegs(n)} disabled={!regSession}
+                                                className="flex-1 py-2.5 rounded-[10px] bg-[#FF9500]/10 text-[#FF9500] text-[17px] font-semibold active:bg-[#FF9500]/25 disabled:opacity-50">+{n}</button>
+                                        ))}
+                                    </div>
+                                    {unlinkedMembers(users, regRows).length > 0 && (
+                                        <>
+                                            <div className="text-[13px] text-gray-500 mt-4 mb-2">สมาชิกที่ยังไม่ผูก LINE แตะเพื่อเพิ่ม</div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {unlinkedMembers(users, regRows).map(u => (
+                                                    <button key={u.User_ID} onClick={() => addUnlinkedReg(u)} disabled={!regSession}
+                                                        className="px-3 py-1.5 rounded-full bg-[#007AFF]/10 text-[#007AFF] text-[15px] font-medium active:bg-[#007AFF]/20 disabled:opacity-50">+ {u.DisplayName}</button>
                                                 ))}
                                             </div>
-                                        );
-                                    })()}
-                                    <div className="flex gap-2 items-center">
-                                        <div className="flex-1 min-w-0 flex items-center bg-[#F2F2F7] rounded-[12px] px-3 py-2.5">
-                                            <span className="text-[16px] text-gray-400">guest_</span>
-                                            <input value={regGuestName} onChange={e => setRegGuestName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addNewGuestReg(); }}
-                                                placeholder="ชื่อเล่น" className="flex-1 min-w-0 bg-transparent text-[16px] outline-none placeholder-gray-300" />
-                                        </div>
-                                        <button onClick={addNewGuestReg} disabled={!regSession || !regGuestName.trim()} className="px-4 py-2.5 rounded-[12px] bg-[#FF9500] text-white font-semibold disabled:opacity-40 active:opacity-80">เพิ่ม</button>
-                                    </div>
+                                        </>
+                                    )}
                                 </div>
                                 {regPickOpen && (
                                     <MultiPicker title="เพิ่มผู้เล่น" onClose={() => setRegPickOpen(false)} onConfirm={addRegs}
@@ -1200,7 +1202,6 @@
             const [amExistingId, setAmExistingId] = useState("");
             const [amNewName, setAmNewName] = useState("");
             const [amMode, setAmMode] = useState("member"); // member | guest
-            const [amNewHours, setAmNewHours] = useState("All");
             const [amWillCancel, setAmWillCancel] = useState(false);
 
             const scrollPositionRef = useRef(0);
@@ -1648,32 +1649,28 @@
                 setAmBase(currentRegs.map(r => ({ ...r })));
                 setAmExistingId("");
                 setAmNewName("");
-                setAmNewHours("All");
                 setAmMode("member");
                 setAmWillCancel(info.isCancelled);
                 setShowAdminManager(true);
             };
 
             const buildPendingAdd = () => {
-                const base = { Hours_Joined: info.isWorkday ? amNewHours : 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() };
+                const base = { Hours_Joined: 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() };
                 if (amExistingId) {
                     const u = users.find(x => String(x.User_ID) === amExistingId);
                     if (u) return { ...base, User_ID: String(u.User_ID), DisplayName: u.DisplayName };
                 }
-                const typed = amNewName.trim();
-                if (!typed) return null;
-                // โหมด guest: ใส่ guest_ นำหน้าให้เอง และใช้ guest คนเดิมถ้าชื่อซ้ำ (ไม่สร้าง user ซ้ำ)
-                const name = amMode === 'guest' && !isGuestName(typed) ? GUEST_PREFIX + typed : typed;
+                const name = amNewName.trim();
+                if (!name) return null;
                 const same = users.find(x => String(x.DisplayName || '').toLowerCase() === name.toLowerCase());
                 if (same) return { ...base, User_ID: String(same.User_ID), DisplayName: same.DisplayName };
                 return { ...base, User_ID: 'NEW_' + Date.now(), DisplayName: name };
             };
 
-            // แตะชื่อ guest เดิมเพื่อเพิ่มทันที (ใช้ชั่วโมงที่เลือกอยู่)
-            const handleQuickAddGuest = u => {
-                if (amData.some(r => String(r.User_ID) === String(u.User_ID))) return showToast('มีชื่อนี้ในรอบแล้ว', 'error');
-                setAmData([...amData, { User_ID: String(u.User_ID), DisplayName: u.DisplayName, Hours_Joined: si.isWorkday ? amNewHours : 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() }]);
-            };
+            // แท็บ Guest: เพิ่ม guest n คนแบบรันเลข หรือแตะสมาชิกที่ยังไม่ผูก LINE เพื่อเพิ่มทันที
+            const asReg = u => ({ User_ID: String(u.User_ID), DisplayName: u.DisplayName, Hours_Joined: 'All', Payment_Status: 'Unpaid', Timestamp: new Date().toISOString() });
+            const handleAddGuests = n => setAmData([...amData, ...nextGuests(users, amData, n).map(asReg)]);
+            const handleQuickAdd = u => setAmData([...amData, asReg(u)]);
 
             const handleAdminAdd = () => {
                 const row = buildPendingAdd();
@@ -1682,7 +1679,6 @@
                 setAmData([...amData, row]);
                 setAmExistingId("");
                 setAmNewName("");
-                setAmNewHours("All");
             };
 
             const handleAdminSave = async () => {
@@ -2165,8 +2161,8 @@
                                     <div className="mt-8">
                                         <SectionTitle>เพิ่มผู้เล่น</SectionTitle>
                                         <div className="px-4 mb-3">
-                                            <div className="flex bg-[#767680]/12 rounded-[10px] p-0.5">
-                                                {[['member', 'สมาชิก'], ['guest', 'Guest (คนนอก)']].map(([k, label]) => (
+                                            <div className="flex bg-[#E9E9EA] rounded-[10px] p-0.5">
+                                                {[['member', 'สมาชิก'], ['guest', 'Guest']].map(([k, label]) => (
                                                     <button key={k} onClick={() => { setAmMode(k); setAmExistingId(""); setAmNewName(""); }}
                                                         className={`flex-1 py-1.5 rounded-[8px] text-[14px] font-semibold transition-colors ${amMode === k ? 'bg-white text-black shadow-sm' : 'text-gray-600'}`}>
                                                         {label}
@@ -2174,25 +2170,31 @@
                                                 ))}
                                             </div>
                                         </div>
-                                        <div className="bg-white border-y border-gray-200 divide-y divide-gray-200">
-                                            {amMode === 'guest' && (() => {
-                                                const guests = users.filter(u => isGuestName(u.DisplayName) && !amData.some(r => String(r.User_ID) === String(u.User_ID)))
-                                                    .sort((a, b) => String(a.DisplayName).localeCompare(String(b.DisplayName), 'th'));
-                                                return guests.length > 0 && (
+                                        {amMode === 'guest' ? (
+                                            <div className="bg-white border-y border-gray-200 divide-y divide-gray-200">
+                                                <div className="p-4">
+                                                    <div className="text-[13px] text-gray-500 mb-2">เพิ่ม guest กี่คน (ถัดไป: {(nextGuests(users, amData, 1)[0] || {}).DisplayName})</div>
+                                                    <div className="flex gap-2">
+                                                        {[1, 2, 3, 4, 5].map(n => (
+                                                            <button key={n} onClick={() => handleAddGuests(n)}
+                                                                className="flex-1 py-2.5 rounded-[10px] bg-[#FF9500]/10 text-[#FF9500] text-[17px] font-semibold active:bg-[#FF9500]/25">+{n}</button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                {unlinkedMembers(users, amData).length > 0 && (
                                                     <div className="p-4">
-                                                        <div className="text-[13px] text-gray-500 mb-2">Guest เดิม แตะเพื่อเพิ่มทันที</div>
+                                                        <div className="text-[13px] text-gray-500 mb-2">สมาชิกที่ยังไม่ผูก LINE แตะเพื่อเพิ่ม</div>
                                                         <div className="flex flex-wrap gap-2">
-                                                            {guests.map(u => (
-                                                                <button key={u.User_ID} onClick={() => handleQuickAddGuest(u)}
-                                                                    className="px-3 py-1.5 rounded-full bg-[#FF9500]/10 text-[#FF9500] text-[15px] font-medium active:bg-[#FF9500]/25">
-                                                                    + {guestLabel(u.DisplayName)}
-                                                                </button>
+                                                            {unlinkedMembers(users, amData).map(u => (
+                                                                <button key={u.User_ID} onClick={() => handleQuickAdd(u)}
+                                                                    className="px-3 py-1.5 rounded-full bg-[#007AFF]/10 text-[#007AFF] text-[15px] font-medium active:bg-[#007AFF]/20">+ {u.DisplayName}</button>
                                                             ))}
                                                         </div>
                                                     </div>
-                                                );
-                                            })()}
-                                            {amMode === 'member' && (
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div className="bg-white border-y border-gray-200 divide-y divide-gray-200">
                                                 <div className="p-3 pl-4 flex items-center">
                                                     <span className="text-[17px] text-black w-24">จากระบบ</span>
                                                     <select value={amExistingId} onChange={e => { setAmExistingId(e.target.value); setAmNewName(""); }}
@@ -2203,28 +2205,16 @@
                                                             .map(u => <option key={u.User_ID} value={String(u.User_ID)}>{u.DisplayName}</option>)}
                                                     </select>
                                                 </div>
-                                            )}
-                                            <div className="p-3 pl-4 flex items-center">
-                                                <span className="text-[17px] text-black w-24">{amMode === 'guest' ? 'Guest ใหม่' : 'ชื่อใหม่'}</span>
-                                                {amMode === 'guest' && <span className="text-[17px] text-gray-400 mr-0.5">guest_</span>}
-                                                <input type="text" placeholder={amMode === 'guest' ? 'ชื่อเล่น' : 'พิมพ์ชื่อ'} value={amNewName}
-                                                    onChange={e => { setAmNewName(e.target.value); setAmExistingId(""); }}
-                                                    onKeyDown={e => { if (e.key === 'Enter') handleAdminAdd(); }}
-                                                    className="flex-1 min-w-0 text-[17px] text-[#007AFF] bg-transparent outline-none text-right placeholder-gray-300" />
-                                            </div>
-                                            {si.isWorkday && (
                                                 <div className="p-3 pl-4 flex items-center">
-                                                    <span className="text-[17px] text-black w-24">ชั่วโมง</span>
-                                                    <select value={amNewHours} onChange={e => setAmNewHours(e.target.value)}
-                                                        className="flex-1 text-[17px] text-[#007AFF] bg-transparent outline-none text-right">
-                                                        <option value="All">2 ชั่วโมง</option>
-                                                        <option value={H1}>{H1}</option>
-                                                        <option value={H2}>{H2}</option>
-                                                    </select>
+                                                    <span className="text-[17px] text-black w-24">ชื่อใหม่</span>
+                                                    <input type="text" placeholder="พิมพ์ชื่อ" value={amNewName}
+                                                        onChange={e => { setAmNewName(e.target.value); setAmExistingId(""); }}
+                                                        onKeyDown={e => { if (e.key === 'Enter') handleAdminAdd(); }}
+                                                        className="flex-1 min-w-0 text-[17px] text-[#007AFF] bg-transparent outline-none text-right placeholder-gray-300" />
                                                 </div>
-                                            )}
-                                            <button onClick={handleAdminAdd} className="w-full p-3 text-[#007AFF] font-medium text-[17px] active:bg-gray-50">{amMode === 'guest' ? 'เพิ่ม Guest ลงรายชื่อ' : 'เพิ่มลงรายชื่อ'}</button>
-                                        </div>
+                                                <button onClick={handleAdminAdd} className="w-full p-3 text-[#007AFF] font-medium text-[17px] active:bg-gray-50">เพิ่มลงรายชื่อ</button>
+                                            </div>
+                                        )}
                                         <p className="text-[13px] text-gray-500 px-4 mt-2">แอดมินเพิ่มได้เกินโควตา ระบบไม่บล็อก</p>
                                     </div>
 
