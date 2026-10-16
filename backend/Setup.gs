@@ -58,7 +58,9 @@ function migrateChecklist() {
 
 function ensureSheetsExist(ss) {
   const cache = CacheService.getScriptCache();
-  const needsSetup = () => ["Settings", "Users", "Sessions", "Registrations"].some(n => !ss.getSheetByName(n)) || !cache.get("setup_ok");
+  // เช็คแค่ cache: getSheetByName ช้าและเดิมถูกเรียก 4 ครั้งทุกคำขอ (ถ้าลบชีทด้วยมือ ให้รัน initialSetup หรือรอ cache หมดอายุ 6 ชม.)
+  // ถ้า cache ว่าง (ไม่เคยตั้ง/หมดอายุ) initialSetup จะสร้างชีทที่ขาดให้เหมือนเดิม
+  const needsSetup = () => !cache.get("setup_ok");
   if (!needsSetup()) return;
 
   // ตอน cache ว่าง หลายคำขอ (เช่น me กับ getAllData ตอนเปิดแอป) เข้ามาพร้อมกัน ถ้าต่างคนต่างรัน initialSetup

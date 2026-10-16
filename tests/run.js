@@ -108,6 +108,23 @@ test('auth: verified token is cached (LINE called once)', ({ G, world }) => {
   assert.strictEqual(world.fetchLog.length, 1);
 });
 
+test('auth: token cache lives as long as the token (not capped at 10 min), never past 6 h', ({ G, world }) => {
+  G('handleRequest')('me', {}, 'tokA'); // exp = now + 3600
+  const ttls = [...world.cacheTtl.entries()].filter(([k]) => k.startsWith('tok_')).map(([, v]) => v);
+  assert.strictEqual(ttls.length, 1);
+  assert.ok(ttls[0] > 3400 && ttls[0] <= 3570, 'ttl follows exp: ' + ttls[0]);
+});
+
+test('setup: a warm cache skips the per-request sheet lookups', ({ G, world }) => {
+  world.cache.set('setup_ok', '1');
+  const ss = G('SpreadsheetApp').getActiveSpreadsheet();
+  const orig = ss.getSheetByName;
+  let lookups = 0;
+  ss.getSheetByName = n => { lookups++; return orig(n); };
+  G('ensureSheetsExist')(ss);
+  assert.strictEqual(lookups, 0);
+});
+
 test('admin actions are forbidden for non-admins', ({ G }) => {
   expectCode(() => G('handleRequest')('adminSaveSetting', { key: 'COST_SPLIT_BASE', value: 6 }, 'tokA'), 'FORBIDDEN');
 });

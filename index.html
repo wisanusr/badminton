@@ -1160,7 +1160,8 @@
                 const maxTries = isRead ? 3 : 1;
                 for (let attempt = 1; ; attempt++) {
                     const controller = new AbortController();
-                    const timer = setTimeout(() => controller.abort(), 25000);
+                    // read retry ได้ จึงตัดเร็ว (cold start ครั้งแรกมักพลาด ครั้งถัดไปติด) ส่วน action เขียนต้องรอผลจริง
+                    const timer = setTimeout(() => controller.abort(), isRead ? 12000 : 25000);
                     const startedAt = Date.now();
                     try {
                         // ไม่ใส่ headers เพื่อให้เป็น text/plain และไม่ติด CORS preflight
@@ -1250,6 +1251,9 @@
                     fetchAllData();
                     return;
                 }
+                // getAllData เป็นข้อมูลสาธารณะ ไม่ต้องใช้ token จึงยิงทันที ให้ Apps Script (รวม cold start) ทำงานคู่ขนานกับการโหลด LIFF
+                // ถ้า liff.login() พาออกไปหน้า LINE ผลที่ได้จะถูกทิ้งไปตามหน้าเดิม ไม่เสียหาย
+                fetchAllData();
                 (async () => {
                     try {
                         await Promise.race([
@@ -1261,8 +1265,7 @@
                             return;
                         }
                         liffReady = true;
-                        // โหลดรายการแบบ background (หน้าจอมี skeleton) รอแค่ "me" ก่อนเข้าแอป
-                        fetchAllData();
+                        // รายการโหลดไปแล้วตั้งแต่ต้น (ด้านบน) รอแค่ "me" ก่อนเข้าแอป
                         const me = await sendApiRequest("me");
                         if (me.status === "success") {
                             setLineProfile(me.data.line);
