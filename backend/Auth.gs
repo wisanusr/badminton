@@ -26,7 +26,8 @@ function verifyIdToken(ss, idToken) {
   }
 
   const info = { lineUid: data.sub, name: data.name || "", picture: data.picture || "" };
-  const ttl = Math.max(1, Math.min(600, data.exp - Math.floor(Date.now() / 1000) - 30));
+  // เก็บได้ไม่เกินอายุ token และขีดจำกัด CacheService (6 ชม.) ผู้ใช้ที่เปิดแอปซ้ำในชั่วโมงเดียวกันจะไม่ต้องรอเรียก LINE
+  const ttl = Math.max(1, Math.min(21600, data.exp - Math.floor(Date.now() / 1000) - 30));
   cache.put(key, JSON.stringify(info), ttl);
   return info;
 }
