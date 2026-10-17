@@ -9,7 +9,7 @@ const AUDIT_HEADERS = ["Time", "Source", "Action", "Who", "Payload", "Result", "
 const AUDIT_MAX_ROWS = 5000;   // when the sheet grows past this, the oldest AUDIT_PRUNE_ROWS rows are dropped
 const AUDIT_PRUNE_ROWS = 1000;
 
-const READ_ACTIONS = ["getAllData", "me", "adminGetHistory", "adminGetSettings"]; // not written to the sheet (only failures go to the execution log)
+const READ_ACTIONS = ["getAllData", "me", "claimPoint", "adminGetHistory", "adminGetSettings"]; // not written to the sheet (only failures go to the execution log)
 const PLAYER_ACTIONS = ["register", "cancel", "createProfile", "linkProfile"];    // can only touch Registrations / Users
 const COUNTED_SHEETS = { Sessions: "S", Registrations: "R", Users: "U", Settings: "St" };
 

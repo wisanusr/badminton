@@ -612,6 +612,18 @@ test('claimPoint: refused after the link expired (players), and when no link is 
   assert.strictEqual(h('claimPoint', { session_id: 'C1' }, 'tokAdmin').data.url, CARD, 'admin can still test');
 });
 
+test('claimPoint: no AuditLog row; a player added by hand after the data was cached still gets the link', ({ G, world, sheets }) => {
+  const h = G('handleRequest');
+  setCard(sheets, CARD);
+  sheets.Sessions.rows.push(['C1', inDays(-1), 'Workday', 'A', 'Open', 200]);
+  world.props.set(`point_C1_${dayStr(-1).replace(/-/g, '')}`, String(Date.now() - 3600000));
+  h('getAllData', {}, null);                                              // caches C1 with nobody on it
+  sheets.Registrations.appendRow([1, 'C1', 'U1', 'All', false, 'Unpaid']); // edited in the sheet, cache not cleared
+  assert.strictEqual(h('claimPoint', { session_id: 'C1' }, 'tokA').data.url, CARD);
+  expectCode(() => h('claimPoint', { session_id: 'nope' }, 'tokA'), 'NOT_FOUND');
+  assert.strictEqual(auditRows(sheets).length, 0, 'claims (ok or failed) leave no AuditLog row');
+});
+
 test('pointExpiryNotify: tells admins on the expiry day, then again only on days a card was due, once per day', ({ G, world, sheets }) => {
   const sent = capturePushes(world);
   const exp = () => sheets.Settings.rows.find(r => r[0] === 'POINT_CARD_EXPIRES');
