@@ -1508,11 +1508,14 @@
             }, []);
 
             // ---------- รับแต้ม: ตรวจว่าคนกดลงชื่ออยู่ในรอบนั้น (ฝั่ง server) แล้วค่อยพาไปลิงก์แต้มจริง ----------
+            // ยิงทันทีที่ LIFF พร้อม ไม่ต้องรอ "me" (server หาผู้ใช้จาก token เอง) สองคำขอจึงวิ่งคู่กัน ไม่ต้องรอต่อกัน
             useEffect(() => {
-                if (!claim || claim.status !== 'wait' || !currentUser) return;
+                if (!claim || claim.status !== 'wait') return;
                 setClaim(c => ({ ...c, status: 'checking' }));
                 (async () => {
                     try {
+                        await liffReadyPromise;
+                        if (!liffReady) return; // กำลังพาไปหน้า login ของ LINE หรือ init ล้มเหลว (หน้า error แสดงเองอยู่แล้ว)
                         const r = await sendApiRequest('claimPoint', { session_id: claim.sid });
                         if (r.status === 'success') {
                             setClaim(c => ({ ...c, status: 'done', url: r.data.url }));
@@ -1524,7 +1527,7 @@
                         setClaim(c => ({ ...c, status: 'error', message: e.message }));
                     }
                 })();
-            }, [currentUser, claim && claim.status]);
+            }, [claim && claim.status]);
             const leaveClaim = () => {
                 try { window.history.replaceState(null, '', window.location.pathname); } catch (e) {}
                 setClaim(null);

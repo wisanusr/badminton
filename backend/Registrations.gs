@@ -93,15 +93,13 @@ function cancel(ss, user, payload) {
 function claimPoint(ss, line, payload) {
   const user = requireUser(ss, line);
   const sid = String(payload.session_id || "").trim();
-  const session = getSheetDataAsJSON(ss.getSheetByName("Sessions")).find(s => String(s.Session_ID).trim() === sid);
+  const { session, registered } = claimLookup(ss, sid, user.User_ID);
   if (!session) fail("NOT_FOUND", "ไม่พบรอบนี้");
 
   const card = getPointCard(ss);
   const admin = isAdmin(ss, line.lineUid);
   if (!admin) {
     if (String(session.Status).trim() === "Cancelled") fail("CANCELLED", "รอบนี้ถูกงด");
-    const registered = getSheetDataAsJSON(ss.getSheetByName("Registrations"))
-      .some(r => String(r.Session_ID).trim() === sid && String(r.User_ID).trim() === user.User_ID);
     if (!registered) fail("NOT_REGISTERED", "ไม่พบชื่อคุณในรอบนี้ ลิงก์แต้มสำหรับผู้ที่ลงชื่อเล่นเท่านั้น");
     if (!pointCardSentAt(session)) fail("NOT_SENT", "รอบนี้ยังไม่ได้ส่งการ์ดรับแต้ม");
     if (!isPointClaimDay(toSessionDate(session.Date))) fail("CLAIM_EXPIRED", "เลยเวลารับแต้มแล้ว (กดรับได้ถึงเที่ยงคืนของวันที่ได้รับการ์ด)");
@@ -110,4 +108,19 @@ function claimPoint(ss, line, payload) {
 
   if (!card.url) fail("NO_LINK", "ยังไม่ได้ตั้งลิงก์รับแต้ม");
   return { status: "success", data: { url: card.url } };
+}
+
+// รอบเมื่อวานอยู่ในแคชของ getAllData อยู่แล้ว (ผู้เล่นหลายคนกดการ์ดพร้อมกันตอนเช้า) จึงไม่ต้องอ่านชีท Registrations ทั้งประวัติทุกครั้ง
+// ไม่เจอชื่อในแคช (รอบเก่า / เพิ่งแก้ชีทด้วยมือ / แอดมินทดสอบรอบที่ไม่ได้ลงชื่อ) ค่อยอ่านจากชีทจริงอีกที
+function claimLookup(ss, sid, userId) {
+  const find = (sessions, regs) => {
+    const session = sessions.find(s => String(s.Session_ID).trim() === sid);
+    const registered = !!session && regs.some(r => String(r.Session_ID).trim() === sid && String(r.User_ID).trim() === userId);
+    return { session, registered };
+  };
+  const cached = getAllDataCached(ss);
+  const hit = find(cached.sessions || [], cached.registrations || []);
+  if (hit.registered) return hit;
+  const all = getHistory(ss);
+  return find(all.sessions, all.registrations);
 }
