@@ -137,7 +137,7 @@ function ensureSetting(ss, key, value, desc) {
 //  - checkWeekendQuorum  ทุกวันช่วง 08:00-09:00
 //  - dailyAdminNotify    ทุกวันช่วง 10:00-11:00 (ข้อความโพสต์ในวันเล่น)
 //  - bookCourtNotify     ทุกวันช่วง 12:00-13:00 (แจ้งจำนวนคนรอบวันหยุดเพื่อจองคอร์ด)
-//  - pointReminderNotify ทุกวันช่วง 21:00-22:00 (ส่งการ์ดรับแต้มให้ผู้ลงชื่อ ถ้าตั้งลิงก์บัตรไว้และบัตรยังไม่หมดอายุ)
+//  - pointReminderNotify ทุกวันราว 08:30 ±15 นาที (ส่งการ์ดรับแต้มให้ผู้ลงชื่อรอบเมื่อวาน ถ้าตั้งลิงก์บัตรไว้และบัตรยังไม่หมดอายุ)
 function setupTriggers() {
   const handlers = ["checkWeekendQuorum", "dailyAdminNotify", "bookCourtNotify", "pointReminderNotify"];
   ScriptApp.getProjectTriggers()
@@ -150,5 +150,5 @@ function setupTriggers() {
   ScriptApp.newTrigger("bookCourtNotify")
     .timeBased().everyDays(1).atHour(12).inTimezone("Asia/Bangkok").create();
   ScriptApp.newTrigger("pointReminderNotify")
-    .timeBased().everyDays(1).atHour(21).inTimezone("Asia/Bangkok").create();
+    .timeBased().everyDays(1).atHour(8).nearMinute(30).inTimezone("Asia/Bangkok").create();
 }

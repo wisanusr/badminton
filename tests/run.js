@@ -479,12 +479,12 @@ test('settings: card link must be https or empty, expiry a real date; admin sees
   assert.strictEqual(h('adminGetSettings', {}, 'tokAdmin').data.find(r => r.Key === 'POINT_CARD_EXPIRES').Value, '');
 });
 
-test('pointReminderNotify: needs the card link; today sessions only; linked players once; retried until LINE accepts', ({ G, world, sheets }) => {
+test('pointReminderNotify: needs the card link; sessions played yesterday only; linked players once; retried until LINE accepts', ({ G, world, sheets }) => {
   const sent = capturePushes(world);
   sent.status = 500;
-  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);        // today
-  sheets.Sessions.rows.push(['T3', inDays(1), 'Workday', 'C', 'Open', 200]);        // tomorrow
-  sheets.Sessions.rows.push(['T4', inDays(0), 'Workday', 'D', 'Cancelled', 200]);   // cancelled
+  sheets.Sessions.rows.push(['T1', inDays(-1), 'Workday', 'A', 'Open', 200]);       // played yesterday -> card this morning
+  sheets.Sessions.rows.push(['T3', inDays(0), 'Workday', 'C', 'Open', 200]);        // today -> card goes out tomorrow
+  sheets.Sessions.rows.push(['T4', inDays(-1), 'Workday', 'D', 'Cancelled', 200]);  // cancelled
   ['T1', 'T3', 'T4'].forEach(sid => ['U1', 'U3', 'U2'].forEach(u => sheets.Registrations.appendRow([1, sid, u, 'All', false, 'Unpaid'])));
 
   G('pointReminderNotify')();
@@ -508,10 +508,23 @@ test('pointReminderNotify: needs the card link; today sessions only; linked play
   assert.strictEqual(sent.length, 2);
 });
 
+test('dailyAdminNotify: the play-day post goes out as one plain message, the post text alone, once per day', ({ G, world, sheets }) => {
+  const sent = capturePushes(world);
+  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);
+  sheets.Registrations.appendRow([1, 'T1', 'U1', 'All', false, 'Unpaid']);
+  G('dailyAdminNotify')();
+  const posts = sent.filter(b => b.messages[0].type === 'text');
+  assert.strictEqual(posts.length, 1);
+  assert.deepStrictEqual(posts[0].to, ['Uadmin']);
+  assert.strictEqual(posts[0].messages.length, 1, 'no header message before the post');
+  G('dailyAdminNotify')();
+  assert.strictEqual(sent.filter(b => b.messages[0].type === 'text').length, 1, 'once per day');
+});
+
 test('pointReminderNotify: falls back to plain text when LINE rejects the card (400)', ({ G, world, sheets }) => {
   const sent = capturePushes(world, true);
   setCard(sheets, CARD);
-  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);
+  sheets.Sessions.rows.push(['T1', inDays(-1), 'Workday', 'A', 'Open', 200]);
   sheets.Registrations.appendRow([1, 'T1', 'U1', 'All', false, 'Unpaid']);
   G('pointReminderNotify')();
   assert.deepStrictEqual(sent.map(b => b.messages[0].type), ['flex', 'text']);
@@ -524,7 +537,7 @@ test('pointReminderNotify: falls back to plain text when LINE rejects the card (
 test('pointReminderNotify: sent on the expiry day (last valid day), not after', ({ G, world, sheets }) => {
   const sent = capturePushes(world);
   setCard(sheets, CARD, dayStr(0));
-  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);
+  sheets.Sessions.rows.push(['T1', inDays(-1), 'Workday', 'A', 'Open', 200]);
   sheets.Registrations.appendRow([1, 'T1', 'U1', 'All', false, 'Unpaid']);
   G('pointReminderNotify')();
   assert.strictEqual(sent.length, 1);
@@ -536,27 +549,27 @@ test('pointReminderNotify: sent on the expiry day (last valid day), not after', 
   assert.strictEqual(sent.length, 1, 'expired -> nothing more is sent');
 });
 
-test('claimPoint: card link only for registered players, within 24h of receiving the card, before the link expires', ({ G, world, sheets }) => {
+test('claimPoint: card link only for registered players, on the day the card arrives, before the link expires', ({ G, world, sheets }) => {
   const h = G('handleRequest');
   setCard(sheets, CARD, dayStr(5));
   const hoursAgo = n => String(Date.now() - n * 3600000);
   const sentKey = (sid, offset) => `point_${sid}_${dayStr(offset).replace(/-/g, '')}`;
   const add = (sid, offset, status) => sheets.Sessions.rows.push([sid, inDays(offset), 'Workday', 'A', status, 200]);
-  add('C1', 0, 'Open');        // card sent 1h ago, Alice registered
-  add('C2', 0, 'Open');        // card sent, Alice NOT registered
-  add('C3', -1, 'Open');       // yesterday, card sent 20h ago -> still inside 24h
-  add('C4', 0, 'Cancelled');   // cancelled
-  add('C5', -2, 'Open');       // card sent 30h ago -> too late
-  add('C6', 0, 'Open');        // registered but the card was never sent
+  add('C1', -1, 'Open');       // played yesterday, card sent this morning, Alice registered
+  add('C2', -1, 'Open');       // card sent, Alice NOT registered
+  add('C3', -2, 'Open');       // card arrived yesterday morning -> its day is over
+  add('C4', -1, 'Cancelled');  // cancelled
+  add('C5', -3, 'Open');       // long gone
+  add('C6', -1, 'Open');       // registered but the card was never sent
   ['C1', 'C3', 'C4', 'C5', 'C6'].forEach(sid => sheets.Registrations.appendRow([1, sid, 'U1', 'All', false, 'Unpaid']));
-  world.props.set(sentKey('C1', 0), hoursAgo(1));
-  world.props.set(sentKey('C2', 0), hoursAgo(1));
-  world.props.set(sentKey('C3', -1), hoursAgo(20));
-  world.props.set(sentKey('C4', 0), hoursAgo(1));
-  world.props.set(sentKey('C5', -2), hoursAgo(30));
+  world.props.set(sentKey('C1', -1), hoursAgo(1));
+  world.props.set(sentKey('C2', -1), hoursAgo(1));
+  world.props.set(sentKey('C3', -2), hoursAgo(20));
+  world.props.set(sentKey('C4', -1), hoursAgo(1));
+  world.props.set(sentKey('C5', -3), hoursAgo(50));
 
   assert.strictEqual(h('claimPoint', { session_id: 'C1' }, 'tokA').data.url, CARD);
-  assert.strictEqual(h('claimPoint', { session_id: 'C3' }, 'tokA').data.url, CARD, 'a day later but within 24h of receiving the card');
+  expectCode(() => h('claimPoint', { session_id: 'C3' }, 'tokA'), 'CLAIM_EXPIRED');
   expectCode(() => h('claimPoint', { session_id: 'C2' }, 'tokA'), 'NOT_REGISTERED');
   expectCode(() => h('claimPoint', { session_id: 'C4' }, 'tokA'), 'CANCELLED');
   expectCode(() => h('claimPoint', { session_id: 'C5' }, 'tokA'), 'CLAIM_EXPIRED');
@@ -564,13 +577,13 @@ test('claimPoint: card link only for registered players, within 24h of receiving
   expectCode(() => h('claimPoint', { session_id: 'nope' }, 'tokA'), 'NOT_FOUND');
   expectCode(() => h('claimPoint', { session_id: 'C1' }, 'tokNew'), 'NO_PROFILE');
   expectCode(() => h('claimPoint', { session_id: 'C1' }, null), 'AUTH_REQUIRED');
-  ['C2', 'C5', 'C6'].forEach(sid => assert.strictEqual(h('claimPoint', { session_id: sid }, 'tokAdmin').data.url, CARD, 'admins can open the link to test'));
+  ['C2', 'C3', 'C5', 'C6'].forEach(sid => assert.strictEqual(h('claimPoint', { session_id: sid }, 'tokAdmin').data.url, CARD, 'admins can open the link to test'));
 });
 
-test('claimPoint: the 24h window starts when pointReminderNotify really sent the card', ({ G, world, sheets }) => {
+test('claimPoint: claiming opens when pointReminderNotify really sent the card', ({ G, world, sheets }) => {
   capturePushes(world);
   setCard(sheets, CARD);
-  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);
+  sheets.Sessions.rows.push(['T1', inDays(-1), 'Workday', 'A', 'Open', 200]);
   sheets.Registrations.appendRow([1, 'T1', 'U1', 'All', false, 'Unpaid']);
   expectCode(() => G('handleRequest')('claimPoint', { session_id: 'T1' }, 'tokA'), 'NOT_SENT');
   G('pointReminderNotify')();
@@ -579,9 +592,9 @@ test('claimPoint: the 24h window starts when pointReminderNotify really sent the
 
 test('claimPoint: refused after the link expired (players), and when no link is set', ({ G, world, sheets }) => {
   const h = G('handleRequest');
-  sheets.Sessions.rows.push(['C1', inDays(0), 'Workday', 'A', 'Open', 200]);
+  sheets.Sessions.rows.push(['C1', inDays(-1), 'Workday', 'A', 'Open', 200]);
   sheets.Registrations.appendRow([1, 'C1', 'U1', 'All', false, 'Unpaid']);
-  world.props.set(`point_C1_${dayStr(0).replace(/-/g, '')}`, String(Date.now() - 3600000));
+  world.props.set(`point_C1_${dayStr(-1).replace(/-/g, '')}`, String(Date.now() - 3600000));
   expectCode(() => h('claimPoint', { session_id: 'C1' }, 'tokA'), 'NO_LINK');
   setCard(sheets, CARD, dayStr(-1));
   G('_settingsMap = null');
@@ -589,7 +602,7 @@ test('claimPoint: refused after the link expired (players), and when no link is 
   assert.strictEqual(h('claimPoint', { session_id: 'C1' }, 'tokAdmin').data.url, CARD, 'admin can still test');
 });
 
-test('pointExpiryNotify: tells admins on the expiry day, then again only on play days, once per day', ({ G, world, sheets }) => {
+test('pointExpiryNotify: tells admins on the expiry day, then again only on days a card was due, once per day', ({ G, world, sheets }) => {
   const sent = capturePushes(world);
   const exp = () => sheets.Settings.rows.find(r => r[0] === 'POINT_CARD_EXPIRES');
   const rerun = () => { G('_settingsMap = null'); G('pointExpiryNotify')(); };
@@ -609,11 +622,12 @@ test('pointExpiryNotify: tells admins on the expiry day, then again only on play
   rerun();
   assert.strictEqual(sent.length, 1, 'once per day');
 
-  clearMarkers(); exp()[1] = dayStr(-2);                 // expired, no session today -> quiet
+  clearMarkers(); exp()[1] = dayStr(-2);                 // expired, no session yesterday -> quiet
+  sheets.Sessions.rows.push(['T0', inDays(0), 'Workday', 'A', 'Open', 200]);   // playing today: its card is tomorrow's business
   rerun();
   assert.strictEqual(sent.length, 1);
 
-  sheets.Sessions.rows.push(['T1', inDays(0), 'Workday', 'A', 'Open', 200]);   // expired and there is play today -> remind
+  sheets.Sessions.rows.push(['T1', inDays(-1), 'Workday', 'A', 'Open', 200]);  // expired and yesterday's players miss their card -> remind
   clearMarkers();
   rerun();
   assert.strictEqual(sent.length, 2);
