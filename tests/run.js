@@ -264,6 +264,16 @@ test('getAllData: a pending old session drops out once its checklist is complete
   assert(!sessionIds(h('getAllData', {}, null).data).includes('S10'));
 });
 
+test('updateTask: admin saves Free_Plays with Extra_Shuttles, other columns are refused', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  h('updateTask', { session_id: 'S10', tasks: { Extra_Shuttles: 2, Free_Plays: 1 } }, 'tokAdmin');
+  const hdr = sheets.Sessions.rows[0];
+  const row = sheets.Sessions.rows.find(r => r[0] === 'S10');
+  assert.strictEqual(row[hdr.indexOf('Free_Plays')], 1);
+  assert.strictEqual(row[hdr.indexOf('Extra_Shuttles')], 2);
+  expectCode(() => h('updateTask', { session_id: 'S10', tasks: { Cost: 0 } }, 'tokAdmin'), 'BAD_INPUT');
+});
+
 test('adminGetHistory: admins get every session and registration, others are refused', ({ G, sheets }) => {
   const h = G('handleRequest');
   const d = h('adminGetHistory', {}, 'tokAdmin').data;
