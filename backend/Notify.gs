@@ -255,7 +255,7 @@ function runAdminNotify(kind) {
       let post;
       try { post = buildPostText(ss, session, regs, nameById, rules); }
       catch (err) { console.error("buildPostText failed: " + err); return; }
-      const postRes = pushToLine(adminIds, ["📋 ข้อความสำหรับโพสต์กลุ่ม LINE วันนี้ (คัดลอกข้อความถัดไปได้เลย)", post]);
+      const postRes = pushToLine(adminIds, post); // ส่งแค่ข้อความโพสต์ ให้แจ้งเตือนโชว์ข้อความนั้นเลย กดค้างคัดลอกได้ทันที
       if (postRes.code === 200) markSent(`post_${sid}_${todayKey}`);
     }
   });
@@ -339,7 +339,7 @@ function buildPointFlex(date, location, url) { // url = ลิงก์เข้
           { type: "text", text: when, size: "sm", color: "#6B7280", wrap: true },
           { type: "separator", margin: "md" },
           { type: "text", text: "รับแต้มสะสม แล้วมาตบฟรีได้เลย 🎁", size: "sm", color: "#374151", wrap: true, margin: "md" },
-          { type: "text", text: "กดรับได้ภายใน 24 ชั่วโมง", size: "xs", color: "#9CA3AF", margin: "sm" }
+          { type: "text", text: "กดรับได้ถึงเที่ยงคืนวันนี้", size: "xs", color: "#9CA3AF", margin: "sm" }
         ]
       },
       footer: {
@@ -350,14 +350,16 @@ function buildPointFlex(date, location, url) { // url = ลิงก์เข้
   };
 }
 
-const CLAIM_WINDOW_MS = 24 * 3600000; // ผู้เล่นกดรับแต้มได้ภายใน 24 ชั่วโมงหลังได้รับการ์ด
-
 // เวลาที่ส่งการ์ดแต้มของรอบนั้นสำเร็จ (ตัวจดกันส่งซ้ำเก็บเวลาไว้) 0 = ยังไม่ได้ส่ง
 function pointCardSentAt(session) {
   const d = toSessionDate(session.Date);
   if (!d) return 0;
-  const key = `point_${String(session.Session_ID).trim()}_${Utilities.formatDate(d, "Asia/Bangkok", "yyyyMMdd")}`;
-  return Number(PropertiesService.getScriptProperties().getProperty(key)) || 0;
+  return Number(PropertiesService.getScriptProperties().getProperty(pointCardKey(String(session.Session_ID).trim(), d))) || 0;
+}
+
+// ตัวจดกันส่งซ้ำของการ์ดแต้ม ผูกกับรอบและวันเล่น (ไม่ใช่วันที่ส่ง)
+function pointCardKey(sid, sessionDate) {
+  return `point_${sid}_${Utilities.formatDate(sessionDate, "Asia/Bangkok", "yyyyMMdd")}`;
 }
 
 // ลิงก์ในการ์ดแต้ม: เปิดแอป (LIFF) พร้อมรหัสรอบ แอปจะให้ผู้เล่นเข้าสู่ระบบ ตรวจสิทธิ์ แล้วพาไปลิงก์แต้มจริง
@@ -387,7 +389,12 @@ function cardExpiryText(v) {
   return d ? Utilities.formatDate(d, "Asia/Bangkok", "yyyy-MM-dd") : "";
 }
 
-// ทริกเกอร์ทุกวัน 21:00: วันเล่น → ส่งการ์ดให้ผู้เล่นที่ลงชื่อ (ผูก LINE แล้ว) ไปรับแต้มบัตรสะสมแต้มของ LINE OA
+// การ์ดแต้มส่งเช้าวันถัดจากวันเล่น และกดรับได้ตลอดวันนั้น (ถึงเที่ยงคืน เวลาไทย)
+function isPointClaimDay(sessionDate) {
+  return !!sessionDate && daysUntil(sessionDate) === -1;
+}
+
+// ทริกเกอร์ทุกวัน 08:30: รอบที่เล่นเมื่อวาน → ส่งการ์ดให้ผู้เล่นที่ลงชื่อ (ผูก LINE แล้ว) ไปรับแต้มบัตรสะสมแต้มของ LINE OA
 // ส่งเมื่อตั้งลิงก์บัตรไว้และบัตรยังไม่หมดอายุ (วันสุดท้ายยังส่ง) รอบที่งดไม่ส่ง ผู้เล่นรับเอง ระบบไม่รู้ว่าใครรับแล้ว
 function pointReminderNotify() { auditRun("pointReminderNotify", pointReminderRun); }
 
@@ -399,7 +406,6 @@ function pointReminderRun() {
   if (!card.url) return auditNote("pointReminderNotify: ข้าม เพราะยังไม่ได้ตั้งลิงก์รับแต้ม (POINT_CARD_URL ในหน้าตั้งค่า)");
   if (card.expired) return auditNote("pointReminderNotify: ข้าม เพราะลิงก์รับแต้มหมดอายุแล้ว (" + formatThaiDate(card.expires) + ")");
 
-  const todayKey = Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyyMMdd");
   let found = 0;
   const lineById = {};
   getSheetDataAsJSON(ss.getSheetByName("Users")).forEach(u => { lineById[String(u.User_ID).trim()] = String(u.Line_UID || "").trim(); });
@@ -408,11 +414,11 @@ function pointReminderRun() {
   getSheetDataAsJSON(ss.getSheetByName("Sessions")).forEach(row => {
     if (!row.Session_ID || String(row.Status).trim() === "Cancelled") return;
     const date = toSessionDate(row.Date);
-    if (!date || daysUntil(date) !== 0) return;
+    if (!isPointClaimDay(date)) return;
     const sid = String(row.Session_ID).trim();
     found++;
-    const key = `point_${sid}_${todayKey}`;
-    if (wasSent(key)) return auditNote(`pointReminderNotify: รอบ ${sid} ส่งไปแล้ววันนี้ (ลบ Script property "${key}" ถ้าต้องการส่งซ้ำเพื่อทดสอบ)`);
+    const key = pointCardKey(sid, date);
+    if (wasSent(key)) return auditNote(`pointReminderNotify: รอบ ${sid} ส่งไปแล้ว (ลบ Script property "${key}" ถ้าต้องการส่งซ้ำเพื่อทดสอบ)`);
 
     const lineIds = allRegs
       .filter(r => String(r.Session_ID).trim() === sid)
@@ -427,11 +433,11 @@ function pointReminderRun() {
     auditNote(`pointReminderNotify: รอบ ${sid} ส่งถึง ${lineIds.length} คน ผลจาก LINE = ${res.code}`);
     if (res.code === 200) markSent(key);
   });
-  if (!found) auditNote("pointReminderNotify: ไม่มีรอบที่เล่นวันนี้ (หรือรอบถูกงด) ตรวจวันที่ของรอบในชีท Sessions");
+  if (!found) auditNote("pointReminderNotify: ไม่มีรอบที่เล่นเมื่อวาน (หรือรอบถูกงด) ตรวจวันที่ของรอบในชีท Sessions");
 }
 
 // ทริกเกอร์ 10:00 (ต่อจาก dailyAdminNotify): ถึงวันหมดอายุของลิงก์รับแต้ม → แจ้งแอดมินให้ไปใส่ลิงก์ใหม่/วันหมดอายุใหม่ในหน้าตั้งค่า
-// ถึงวันหมดอายุแจ้งหนึ่งครั้ง หลังจากนั้นถ้ายังไม่อัปเดต แจ้งซ้ำเฉพาะวันที่มีรอบเล่น (วันที่ผู้เล่นจะพลาดแต้ม)
+// ถึงวันหมดอายุแจ้งหนึ่งครั้ง หลังจากนั้นถ้ายังไม่อัปเดต แจ้งซ้ำเฉพาะวันที่ควรได้ส่งการ์ด (วันถัดจากวันเล่น ผู้เล่นพลาดแต้ม)
 function pointExpiryNotify() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ensureSheetsExist(ss);
@@ -444,17 +450,15 @@ function pointExpiryNotify() {
   if (wasSent(key)) return auditNote("pointExpiryNotify: วันนี้แจ้งไปแล้ว");
 
   if (card.expired) {
-    const playToday = getSheetDataAsJSON(ss.getSheetByName("Sessions")).some(s => {
-      const d = toSessionDate(s.Date);
-      return s.Session_ID && String(s.Status).trim() !== "Cancelled" && d && daysUntil(d) === 0;
-    });
-    if (!playToday) return auditNote("pointExpiryNotify: หมดอายุแล้ว แต่วันนี้ไม่มีรอบเล่น จึงไม่แจ้งซ้ำ");
+    const cardDue = getSheetDataAsJSON(ss.getSheetByName("Sessions")).some(s =>
+      s.Session_ID && String(s.Status).trim() !== "Cancelled" && isPointClaimDay(toSessionDate(s.Date)));
+    if (!cardDue) return auditNote("pointExpiryNotify: หมดอายุแล้ว แต่เมื่อวานไม่มีรอบเล่น จึงไม่แจ้งซ้ำ");
   }
 
   const when = formatThaiDate(card.expires);
   const title = card.expired ? "⚠️ ลิงก์รับแต้มหมดอายุแล้ว" : "⏰ ลิงก์รับแต้มหมดอายุวันนี้";
   const note = card.expired
-    ? "วันนี้มีรอบเล่น แต่ผู้เล่นจะไม่ได้รับการ์ดแต้ม จนกว่าจะใส่ลิงก์ใหม่และวันหมดอายุใหม่ในหน้าตั้งค่า"
+    ? "เมื่อวานมีรอบเล่น แต่ผู้เล่นไม่ได้รับการ์ดแต้ม จนกว่าจะใส่ลิงก์ใหม่และวันหมดอายุใหม่ในหน้าตั้งค่า"
     : "อย่าลืมใส่ลิงก์ใหม่และวันหมดอายุใหม่ในหน้าตั้งค่า หลังจากวันนี้ผู้เล่นจะไม่ได้รับการ์ดแต้ม";
   const res = pushCardOrText(adminIds, buildNoticeFlex({
     title, color: card.expired ? RED : ORANGE,
