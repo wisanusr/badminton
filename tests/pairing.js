@@ -13,8 +13,8 @@ const end = html.indexOf('// pairing:end');
 if (start === -1 || end === -1) throw new Error('pairing block not found in index.html');
 const ctx = {};
 vm.createContext(ctx);
-vm.runInContext(html.slice(start, end) + '\nthis.api = { proposeGame, planQueue, numberQueue, pairGamesLeft, pairQueue, pairStreak, checkGame, parseAvoidRules, pairSkillOf, pairKey };', ctx);
-const { proposeGame, planQueue, numberQueue, pairGamesLeft, pairQueue, pairStreak, checkGame, parseAvoidRules, pairSkillOf, pairKey } = ctx.api;
+vm.runInContext(html.slice(start, end) + '\nthis.api = { proposeGame, planQueue, numberQueue, pairQueue, pairStreak, checkGame, parseAvoidRules, pairSkillOf, pairKey };', ctx);
+const { proposeGame, planQueue, numberQueue, pairQueue, pairStreak, checkGame, parseAvoidRules, pairSkillOf, pairKey } = ctx.api;
 const plain = x => JSON.parse(JSON.stringify(x));
 
 // mulberry32: small seeded PRNG
@@ -128,6 +128,22 @@ both('8 players, 1 court, 2 hours: nobody plays 3 in a row, games even (±1), no
     const n = Object.values(countGames(games));
     assert.strictEqual(n.length, 8);
     assert(Math.max(...n) - Math.min(...n) <= 1, `seed ${seed}: uneven ${n}`);
+  }
+});
+
+both('8 players, 1 court, 2 hours: groups mix (no two fixed groups of 4 taking turns all evening)', ahead => {
+  for (let seed = 1; seed <= 30; seed++) {
+    const { games, ps } = simulate({ people: EIGHT, seed, ahead });
+    ps.forEach(p => {
+      const met = new Set(), partners = new Set();
+      games.filter(g => ids(g).includes(p.id)).forEach(g => {
+        ids(g).forEach(x => { if (x !== p.id) met.add(x); });
+        g.teams.forEach(t => { if (t.includes(p.id)) t.forEach(x => { if (x !== p.id) partners.add(x); }); });
+      });
+      assert(met.size >= 6, `seed ${seed}: ${p.name} only shared games with ${met.size} of 7`);
+      // skill balance pairs the one B player with an H player most of the time, so partners vary less than opponents
+      assert(partners.size >= 3, `seed ${seed}: ${p.name} only partnered ${partners.size} people`);
+    });
   }
 });
 
@@ -245,18 +261,11 @@ test('numberQueue: match numbers stay fixed as games start, get redrawn, and the
   assert.deepStrictEqual(plain(q.map(g => g.no)), [2, 4, 5]);
 });
 
-test('pairGamesLeft: whole 10-minute games left until the end, per court', () => {
-  assert.strictEqual(pairGamesLeft([0], 120 * MIN), 12);
-  assert.strictEqual(pairGamesLeft([0, 5 * MIN], 120 * MIN), 12 + 11);
-  assert.strictEqual(pairGamesLeft([130 * MIN], 120 * MIN), 0);
-});
-
-test('everyone in: a full evening queue (8 people, 1 court, 2 h = 12 games) that keeps the rules all the way', () => {
+test('full queue: 8 people, 1 court, 2 hours × 6 = 12 matches that keep the rules all the way', () => {
   for (let seed = 1; seed <= 20; seed++) {
     const players = queueWorld();
-    const q = planQueue({ players, games: [], now: 0, clock: 0, courtFreeAt: [0], ahead: pairGamesLeft([0], 120 * MIN), random: seeded(seed) });
+    const q = planQueue({ players, games: [], now: 0, clock: 0, ahead: 12, perHour: 6, random: seeded(seed) });
     assert.strictEqual(q.length, 12);
-    assert.deepStrictEqual(plain(q.map(g => g.at / MIN)), [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110]);
     const streak = {};
     q.forEach(g => players.forEach(p => {
       streak[p.id] = ids(g).includes(p.id) ? (streak[p.id] || 0) + 1 : 0;
@@ -267,25 +276,32 @@ test('everyone in: a full evening queue (8 people, 1 court, 2 h = 12 games) that
   }
 });
 
-test('full queue: people registered for the first hour only are not put in games that end after they leave', () => {
+test('full queue: one-hour players only in their hour (matches 1-6 = first hour, 7-12 = second)', () => {
   for (let seed = 1; seed <= 20; seed++) {
-    const players = queueWorld().map((p, i) => (i >= 6 ? { ...p, leaveAt: 60 * MIN } : p));   // two leave at 19:00
-    const q = planQueue({ players, games: [], now: 0, clock: 0, courtFreeAt: [0], ahead: 12, random: seeded(seed) });
-    q.filter(g => g.at + 10 * MIN > 60 * MIN).forEach(g => assert(!ids(g).some(x => x === 'P6' || x === 'P7'), `seed ${seed}: leaver in a ${g.at / MIN}-min game`));
-    assert(q.slice(0, 6).some(g => ids(g).includes('P6')), 'they still play in the first hour');
+    // P6, P7 only 18:00-19:00; P8, P9 only 19:00-20:00
+    const players = queueWorld(['นิวส์', 'แทน', 'แอม', 'กั๊ก', 'ครีม', 'หวาน', 'ต้อม', 'เหมียว', 'GP', 'มอส'])
+      .map((p, i) => (i === 6 || i === 7 ? { ...p, hours: [true, false] } : i >= 8 ? { ...p, hours: [false, true] } : p));
+    const q = planQueue({ players, games: [], now: 0, clock: 0, ahead: 12, perHour: 6, random: seeded(seed) });
+    q.forEach((g, k) => {
+      if (k >= 6) assert(!ids(g).some(x => x === 'P6' || x === 'P7'), `seed ${seed}: first-hour player in match ${k + 1}`);
+      if (k < 6) assert(!ids(g).some(x => x === 'P8' || x === 'P9'), `seed ${seed}: second-hour player in match ${k + 1}`);
+    });
+    assert(q.slice(0, 6).some(g => ids(g).includes('P6')) && q.slice(6).some(g => ids(g).includes('P8')), 'they still play in their hour');
+    // after 7 matches have been played, the next queued one is match 8 = second hour
+    const played = q.slice(0, 7).map((g, i) => ({ teams: g.teams, start: 2 * i + 1, end: 2 * i + 2 }));
+    const r = planQueue({ players, games: played, now: 14, clock: 0, ahead: 5, perHour: 6, slotBase: 7, random: seeded(seed) });
+    r.forEach(g => assert(!ids(g).some(x => x === 'P6' || x === 'P7'), `seed ${seed}: first-hour player after match 7`));
   }
 });
 
-test('full queue, 2 courts: a court still playing is respected and games at the same time never share a player', () => {
+test('full queue, 2 courts: 12 per hour, games next to each other in the queue never share a player', () => {
   for (let seed = 1; seed <= 20; seed++) {
     const players = queueWorld(['นิวส์', 'แทน', 'แอม', 'กั๊ก', 'ครีม', 'หวาน', 'ต้อม', 'เหมียว', 'GP', 'มอส']);
     const live = { court: 0, teams: [['P0', 'P1'], ['P2', 'P3']], start: 1, end: null };
-    const free = [6 * MIN, 0];   // court 1 busy until minute 6, court 2 free now
-    const q = planQueue({ players, games: [live], now: 1, clock: 0, courtFreeAt: free, courts: 2, ahead: pairGamesLeft(free, 60 * MIN), random: seeded(seed) });
-    const slots = [{ ids: ids(live), from: -Infinity, to: 6 * MIN }].concat(q.map(g => ({ ids: ids(g), from: g.at, to: g.at + 10 * MIN })));
-    slots.forEach((a, i) => slots.slice(i + 1).forEach(b => {
-      if (a.from < b.to && b.from < a.to) assert(!a.ids.some(x => b.ids.includes(x)), `seed ${seed}: overlap at ${b.from / MIN}`);
-    }));
+    const q = planQueue({ players, games: [live], now: 1, clock: 0, courts: 2, ahead: 23, perHour: 12, slotBase: 1, random: seeded(seed) });
+    assert.strictEqual(q.length, 23);
+    assert(!ids(q[0]).some(x => ids(live).includes(x)), `seed ${seed}: first queued game uses someone still on court`);
+    for (let k = 1; k < q.length; k++) assert(!ids(q[k]).some(x => ids(q[k - 1]).includes(x)), `seed ${seed}: matches ${k} and ${k + 1} overlap`);
   }
 });
 
@@ -304,6 +320,14 @@ test('pairStreak: back-to-back games count, a game started without you is a rest
   assert.strictEqual(pairStreak('a', games, 6), 0, 'game 3 started without a');
   assert.strictEqual(pairStreak('e', games, 6), 2);
   assert.strictEqual(pairStreak('z', games, 6), 0);
+});
+
+test('pairQueue: people with no games always come before people who played, even when rounding puts them in the same tier', () => {
+  // checked in long before: 1 game over many slots rounds to the same tier as 0 games
+  const ps = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((n, i) => ({ id: n, name: n, arrivedAt: 0, order: i }));
+  const games = [{ teams: [['a', 'b'], ['c', 'd']], start: 1, end: 2 }];
+  const q = pairQueue({ players: ps, games, now: 2, clock: 400 * MIN });
+  assert.deepStrictEqual(plain(q.slice(0, 4).map(r => r.id)), ['e', 'f', 'g', 'h']);
 });
 
 test('pairQueue: rested and fewer games first; at zero games, arrival order', () => {
