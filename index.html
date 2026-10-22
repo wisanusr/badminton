@@ -1434,6 +1434,7 @@
             const gone = st.checkins.filter(c => c.left);
             const freeCourts = Array.from({ length: st.courts }, (_, c) => c).filter(c => !onCourt(c));
             const oneCourt = st.courts === 1 && !live.length;   // คอร์ดเดียว (และไม่มีเกมค้างจากโหมดเริ่ม/จบ) ใช้ "เล่นแล้ว" แทนกล่องคอร์ด
+            const playedList = done.slice().sort((a, b) => a.start - b.start);   // คอร์ดเดียว: คู่ที่เล่นแล้วอยู่ในรายการเดียวกับคิว ตามลำดับที่เล่น
 
             return (
                 <div className="mb-8">
@@ -1526,12 +1527,24 @@
                     })}
 
                     {/* คิวคู่ถัดไป */}
-                    {(st.queue.length > 0 || bench.length > 0) && (
+                    {(st.queue.length > 0 || bench.length > 0 || (oneCourt && done.length > 0)) && (
                         <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mt-3">
-                            <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 text-[16px] font-semibold text-gray-700">คิวคู่ถัดไป</div>
+                            <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 text-[16px] font-semibold text-gray-700">{oneCourt ? 'ตารางคู่' : 'คิวคู่ถัดไป'}</div>
+                            {oneCourt && playedList.map((g, i) => (
+                                <React.Fragment key={'p' + g.start}>
+                                {hourOfNo(g.no) !== (i > 0 ? hourOfNo(playedList[i - 1].no) : -1) && (
+                                    <div className="px-4 py-1.5 bg-gray-50 border-b border-gray-100 text-[12px] font-medium text-gray-500">ชั่วโมงที่ {hourOfNo(g.no) + 1}</div>
+                                )}
+                                <div className="px-4 py-2.5 border-b border-gray-100 flex items-center gap-2 text-[15px] text-gray-400">
+                                    <span className="w-9 shrink-0 text-center text-[17px] font-bold tabular-nums" aria-label={`คู่ที่ ${g.no} เล่นแล้ว`}>{g.no}</span>
+                                    <span className="flex-1 min-w-0">✓ {team(g.teams[0])} vs {team(g.teams[1])}</span>
+                                    {i === playedList.length - 1 && <button onClick={() => undoPlayed(g)} className="shrink-0 text-[14px] text-[#007AFF] active:opacity-70">ย้อน</button>}
+                                </div>
+                                </React.Fragment>
+                            ))}
                             {st.queue.map((g, k) => (
                                 <React.Fragment key={k}>
-                                {hourOfNo(g.no) !== (k > 0 ? hourOfNo(st.queue[k - 1].no) : -1) && (
+                                {hourOfNo(g.no) !== (k > 0 ? hourOfNo(st.queue[k - 1].no) : oneCourt && playedList.length ? hourOfNo(playedList[playedList.length - 1].no) : -1) && (
                                     <div className="px-4 py-1.5 bg-gray-50 border-b border-gray-100 text-[12px] font-medium text-gray-500">ชั่วโมงที่ {hourOfNo(g.no) + 1}</div>
                                 )}
                                 <div className="px-4 py-3 border-b border-gray-100">
@@ -1577,7 +1590,7 @@
                     )}
 
                     {/* ประวัติ */}
-                    {done.length > 0 && (
+                    {!oneCourt && done.length > 0 && (
                         <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mt-3">
                             <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 flex justify-between items-center">
                                 <span className="text-[16px] font-semibold text-gray-700">เล่นไปแล้ว</span>
