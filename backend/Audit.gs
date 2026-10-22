@@ -9,7 +9,8 @@ const AUDIT_HEADERS = ["Time", "Source", "Action", "Who", "Payload", "Result", "
 const AUDIT_MAX_ROWS = 5000;   // when the sheet grows past this, the oldest AUDIT_PRUNE_ROWS rows are dropped
 const AUDIT_PRUNE_ROWS = 1000;
 
-const READ_ACTIONS = ["getAllData", "me", "claimPoint", "adminGetHistory", "adminGetSettings"]; // not written to the sheet (only failures go to the execution log)
+// not written to the sheet (only failures go to the execution log): plain reads, and the pairing board (liveSave runs dozens of times an evening)
+const READ_ACTIONS = ["getAllData", "me", "claimPoint", "adminGetHistory", "adminGetSettings", "liveGet", "liveSave"];
 const PLAYER_ACTIONS = ["register", "cancel", "createProfile", "linkProfile"];    // can only touch Registrations / Users
 const COUNTED_SHEETS = { Sessions: "S", Registrations: "R", Users: "U", Settings: "St" };
 

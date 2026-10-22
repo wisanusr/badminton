@@ -489,6 +489,60 @@ test('settings: card link must be https or empty, expiry a real date; admin sees
   assert.strictEqual(h('adminGetSettings', {}, 'tokAdmin').data.find(r => r.Key === 'POINT_CARD_EXPIRES').Value, '');
 });
 
+test('settings: PAIRING_AVOID (who must not share a court) is set up by default, editable, and public', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  h('getAllData', {}, null); // first request runs initialSetup
+  assert.strictEqual(sheets.Settings.rows.filter(r => r[0] === 'PAIRING_AVOID').length, 1, 'initialSetup adds the key once');
+  h('adminSaveSetting', { key: 'PAIRING_AVOID', value: ' Alice / Bob ' }, 'tokAdmin');
+  expectCode(() => h('adminSaveSetting', { key: 'PAIRING_AVOID', value: 'x' }, 'tokA'), 'FORBIDDEN');
+  assert.strictEqual(h('getAllData', {}, null).data.settings.PAIRING_AVOID, 'Alice / Bob', 'the page reads it from getAllData');
+});
+
+const plain = x => JSON.parse(JSON.stringify(x));   // values from the vm have another realm's prototypes
+
+test('live board: admins only; save/get round-trips with a version; a save based on an old version gets the newer board back', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  expectCode(() => h('liveGet', { session_id: 'S1' }, 'tokA'), 'FORBIDDEN');
+  expectCode(() => h('liveSave', { session_id: 'S1', state: {}, base_version: 0 }, 'tokA'), 'FORBIDDEN');
+
+  assert.deepStrictEqual(plain(h('liveGet', { session_id: 'S1' }, 'tokAdmin').data), { state: null, version: 0 });
+  const board1 = { courts: 1, checkins: [{ id: 'U1', at: 1 }], games: [], queue: [] };
+  assert.strictEqual(h('liveSave', { session_id: 'S1', state: board1, base_version: 0 }, 'tokAdmin').data.version, 1);
+  assert.deepStrictEqual(plain(h('liveGet', { session_id: 'S1' }, 'tokAdmin').data), { state: board1, version: 1 });
+
+  // a second admin still on version 0 is refused and handed version 1
+  const stale = h('liveSave', { session_id: 'S1', state: { courts: 2 }, base_version: 0 }, 'tokAdmin');
+  assert.strictEqual(stale.status, 'conflict');
+  assert.deepStrictEqual(plain(stale.data), { state: board1, version: 1 });
+  assert.strictEqual(h('liveSave', { session_id: 'S1', state: { courts: 2 }, base_version: 1 }, 'tokAdmin').data.version, 2);
+
+  // one row per session, other sessions untouched
+  h('liveSave', { session_id: 'S3', state: { courts: 1 }, base_version: 0 }, 'tokAdmin');
+  assert.strictEqual(sheets.Live.rows.length, 3, 'header + S1 + S3');
+  assert.deepStrictEqual(plain(h('liveGet', { session_id: 'S1' }, 'tokAdmin').data.state), { courts: 2 });
+});
+
+test('live board: bad input is refused; saves are not in the AuditLog and do not drop the getAllData cache', ({ G, world }) => {
+  const h = G('handleRequest');
+  expectCode(() => h('liveSave', { session_id: 'NOPE', state: {}, base_version: 0 }, 'tokAdmin'), 'NOT_FOUND');
+  expectCode(() => h('liveSave', { session_id: 'S1', state: [1], base_version: 0 }, 'tokAdmin'), 'BAD_INPUT');
+  expectCode(() => h('liveSave', { session_id: 'S1', state: { x: 'y'.repeat(50000) }, base_version: 0 }, 'tokAdmin'), 'TOO_BIG');
+  h('getAllData', {}, null);   // fills the cache
+  const keys = [...world.cache.keys()].filter(k => k.startsWith('all_data'));
+  assert.strictEqual(keys.length, 1);
+  const audited = auditRows(world.sheets).length;
+  h('liveSave', { session_id: 'S1', state: { courts: 1 }, base_version: 0 }, 'tokAdmin');
+  h('liveGet', { session_id: 'S1' }, 'tokAdmin');
+  assert.strictEqual(auditRows(world.sheets).length, audited, 'no AuditLog rows');
+  assert(world.cache.has(keys[0]), 'getAllData cache kept');
+});
+
+test('adminSaveUser: skill level B/M/H is saved for pairing', ({ G, sheets }) => {
+  const h = G('handleRequest');
+  h('adminSaveUser', { user_id: 'U3', display_name: 'Carol', skill_level: 'H' }, 'tokAdmin');
+  assert.strictEqual(h('getAllData', {}, null).data.users.find(u => u.User_ID === 'U3').Skill_Level, 'H');
+});
+
 test('pointReminderNotify: needs the card link; sessions played yesterday only; linked players once; retried until LINE accepts', ({ G, world, sheets }) => {
   const sent = capturePushes(world);
   sent.status = 500;

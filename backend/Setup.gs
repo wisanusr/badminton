@@ -32,6 +32,7 @@ function initialSetup() {
   ensureSetting(ss, "NOTIFY_PLAY_DAY", "TRUE", "แจ้งแอดมินทาง LINE 10:00 ในวันที่มีรอบตี พร้อมข้อความโพสต์กลุ่ม (TRUE/FALSE)");
   ensureSetting(ss, "BOOK_NOTICE_DAYS", 2, "รอบวันหยุด: แจ้งแอดมินจำนวนคนก่อนวันเล่นกี่วัน (เพื่อจองคอร์ด)");
   ensureSetting(ss, "POINT_CARD_URL", "", "ลิงก์บัตรสะสมแต้มของ LINE OA (ผู้เล่นเห็นหลังระบบเช็กว่าลงชื่อ ว่าง = ไม่ส่งการ์ดแต้ม)");
+  ensureSetting(ss, "PAIRING_AVOID", "แทน, หวาน / ต้อม", PAIRING_AVOID_DESC);
   ensureSetting(ss, "POINT_CARD_EXPIRES", "", "วันหมดอายุของลิงก์รับแต้ม yyyy-MM-dd (ถึงวันนี้แจ้งแอดมินให้ใส่ลิงก์ใหม่ ว่าง = ไม่มีวันหมดอายุ)");
   clearDataCache();
 }

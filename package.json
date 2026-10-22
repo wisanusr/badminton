@@ -4,7 +4,7 @@
   "description": "Build tooling only: scripts/build.mjs precompiles index.html (JSX + Tailwind) for GitHub Pages. The backend is Apps Script and needs no install.",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node tests/run.js"
+    "test": "node tests/run.js && node tests/pairing.js"
   },
   "devDependencies": {
     "esbuild": "0.28.2",
