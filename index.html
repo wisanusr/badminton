@@ -2350,6 +2350,19 @@
             const currentRegs = info ? info.regs : [];
             const myReg = currentRegs.find(r => String(r.User_ID) === myId) || null;
 
+            // หน้างาน (วันเล่น ตั้งแต่ 1 ชม. ก่อนเริ่ม): แอดมินเห็นกระดานจัดคู่บนหน้าแรก
+            const isPlayTime = si => isAdminUser && !si.isCancelled && si.days === 0 && new Date().getHours() >= (si.isWorkday ? 17 : 15);
+            // หน้ารอบ: ตั้งแต่เริ่มหน้างานจนกว่าเช็คลิสต์แอดมินจะครบ ให้กล่องที่ใช้ตอนตี/สรุปยอดอยู่บนสุด
+            const isWorkMode = (s, si) => (isPlayTime(si) || (isAdminUser && !si.isCancelled && si.isPast)) && !TASKS.every(t => isTrue(s[t.key]));
+            const renderLiveBoard = (s, si) => (
+                <LiveBoard key={s.Session_ID} sessionId={s.Session_ID} title={`${fmtShort(si.date)} ${s.Location || ''}`.trim()}
+                    avoidText={appSettings.PAIRING_AVOID} onShare={shareToLine} showToast={showToast}
+                    api={sendApiRequest} canSync={tokenFresh}
+                    players={si.regs.map(r => ({ ...playerOf(r.User_ID), hours: si.isWorkday && hoursOf(r) !== 'All' ? [inH1(r), inH2(r)] : undefined }))}
+                    members={users.filter(u => u.User_ID).map(u => playerOf(u.User_ID))
+                        .sort((a, b) => a.name.localeCompare(b.name, 'th'))} />
+            );
+
             // ที่ว่างของแต่ละชั่วโมง (ไม่นับตัวเอง เผื่อกรณีแก้ไขเวลา)
             const others = currentRegs.filter(r => String(r.User_ID) !== myId);
             const h1Others = others.filter(inH1).length;
@@ -2686,6 +2699,7 @@
                     : filterMyStatus === 'NotJoined' ? 'ลงชื่อครบทุกรอบแล้ว'
                     : filterDay === 'Weekend' ? 'ยังไม่มีรอบวันหยุด'
                     : 'ยังไม่มีรอบตีที่เปิดอยู่';
+                const live = sessionInfos.find(x => isPlayTime(x.info));   // ไม่ขึ้นกับแท็บที่กรองอยู่
                 const tabs = [
                     { key: 'all', label: 'เร็ว ๆ นี้', Icon: TabIconClock, active: filterMyStatus === 'All' && filterDay === 'All', onClick: () => { setFilterMyStatus('All'); setFilterDay('All'); window.scrollTo({ top: 0, behavior: 'smooth' }); } },
                     { key: 'joined', label: 'ลงแล้ว', Icon: TabIconCheck, active: filterMyStatus === 'Joined', onClick: () => { setFilterMyStatus(p => p === 'Joined' ? 'All' : 'Joined'); setFilterDay('All'); } },
@@ -2712,6 +2726,8 @@
                                         className="shrink-0 px-4 h-8 rounded-full bg-gray-200/80 text-[15px] font-medium text-black active:opacity-70">จัดการข้อมูล</button>
                                 )}
                             </div>
+
+                            {live && renderLiveBoard(live.s, live.info)}
 
                             <SectionTitle right={
                                 <button onClick={manualRefresh} disabled={refreshing} aria-label="รีเฟรชข้อมูล"
@@ -2796,6 +2812,202 @@
                     </div>
                 );
 
+                const workMode = isWorkMode(s, si);
+
+                const infoBox = (
+                    <>
+                    {/* Info */}
+                    <div className={`bg-white rounded-[20px] shadow-sm p-5 mb-8 ${dim ? 'opacity-80' : ''}`}>
+                        <DateTile date={si.date} dim={dim} size="lg" />
+                        <h1 className="text-[28px] font-bold text-black mt-4 mb-2 tracking-tight leading-tight">
+                            {fmtLong(si.date)}{si.isCancelled && ' (งด)'}
+                        </h1>
+                        <p className={`font-semibold text-[17px] mb-2 ${si.isCancelled ? 'text-gray-400 line-through' : 'text-black'}`}>
+                            {timeRange(si.isWorkday)} • {s.Location}
+                        </p>
+                        <p className="text-[15px] text-gray-500 leading-relaxed">{rulesText}</p>
+                    </div>
+                    </>
+                );
+                const registerBox = (
+                    <>
+                    {/* Registration */}
+                    <SectionTitle>ลงชื่อ</SectionTitle>
+                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mb-8">
+                        {si.isCancelled ? (
+                            <div className="p-5 text-center text-[15px] text-gray-500">รอบนี้งดเล่น</div>
+                        ) : myReg && !isEditing ? (
+                            <>
+                                <Row label="สถานะ" value={<span className={si.isPast ? 'text-gray-500' : 'text-[#34C759]'}>ลงชื่อแล้ว</span>} />
+                                <Row label="เวลาเล่น" value={hoursLabel(hoursOf(myReg), si.isWorkday)} last={si.isPast} />
+                                {si.isPast ? null : (
+                                    <>
+                                        <button onClick={() => setShowCancelConfirm(true)} disabled={submitting}
+                                            className="w-full p-4 text-center text-[#FF3B30] text-[17px] active:bg-gray-50">
+                                            ไม่สะดวกเล่นแล้ว
+                                        </button>
+                                    </>
+                                )}
+                            </>
+                        ) : (!myReg && !si.canRegister) ? (
+                            <div className="p-6 text-center">
+                                <IconClock size={30} className="text-gray-300 mx-auto mb-2" />
+                                <div className="text-[17px] font-medium text-black">{closedReason}</div>
+                            </div>
+                        ) : (
+                            <>
+                                <Row label="เวลา" value={timeRange(si.isWorkday)} />
+                                <Row label="ค่าใช้จ่าย" value={`คนละ ${lc.perHead} ฿`} />
+                                <button type="button" onClick={handleRegister} disabled={submitting}
+                                    className="w-full p-4 text-center font-semibold text-[#007AFF] text-[17px] active:bg-gray-50 disabled:opacity-50">
+                                    {submitting ? 'กำลังบันทึก...' : 'ลงชื่อ'}
+                                </button>
+                            </>
+                        )}
+                    </div>
+                    </>
+                );
+                const playersBox = (
+                    <>
+                    {/* Players */}
+                    <SectionTitle right={`รวม ${currentRegs.length} คน`}>รายชื่อ</SectionTitle>
+                    <div className="flex flex-col gap-3 mb-8">
+                        {si.isWorkday ? (
+                            oneHourPlayers ? (
+                                <>
+                                    <PlayerBox title="18:00 - 19:00" list={currentRegs.filter(inH1)} target={si.cap} />
+                                    <PlayerBox title="19:00 - 20:00" list={currentRegs.filter(inH2)} target={si.cap} />
+                                </>
+                            ) : (
+                                <PlayerBox title="เล่น 2 ชั่วโมง" list={currentRegs} target={si.cap} />
+                            )
+                        ) : (
+                            <PlayerBox title="16:00 - 18:00" list={currentRegs} target={null} />
+                        )}
+                    </div>
+                    </>
+                );
+                const addBox = (
+                    <>
+                    {/* Admin: add players (saves immediately) */}
+                    {isAdminUser && (
+                        <div className="mb-8">
+                            <SectionTitle>เพิ่มผู้เล่น</SectionTitle>
+                            <div className="bg-white rounded-[20px] shadow-sm overflow-hidden pt-3">
+                                <AddPlayersBox users={users} rows={currentRegs} onAdd={addNow} showToast={showToast} />
+                            </div>
+                            <p className="text-[13px] text-gray-500 px-4 mt-2">แอดมินเพิ่มได้เกินโควตา ระบบไม่บล็อก</p>
+                        </div>
+                    )}
+                    </>
+                );
+                const liveBox = (
+                    <>
+                    {/* Admin: on-court pairing */}
+                    {isAdminUser && !si.isCancelled && renderLiveBoard(s, si)}
+                    </>
+                );
+                const costBox = (
+                    <>
+                    {/* Cost */}
+                    {!si.isCancelled && (
+                        <>
+                            <SectionTitle>ค่าใช้จ่าย</SectionTitle>
+                            <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mb-8">
+                                <Row label="ค่าคอร์ด" value={`${si.costs.court} ฿`} />
+                                <Row label={`ลูกแบด ${lc.shuttleCount} ลูก`} value={`${lc.shuttle} ฿`} />
+                                <div className={`p-4 flex justify-between items-center ${isAdminUser ? 'border-b border-gray-200' : ''}`}>
+                                    <span className="text-[17px] font-semibold text-black">คนละ</span>
+                                    <span className="text-[22px] font-bold text-[#34C759] tabular-nums">{lc.perHead} ฿</span>
+                                </div>
+
+                                {isAdminUser && (
+                                    <>
+                                        <Stepper label="เติมลูกเพิ่มหน้างาน" value={extraShuttles} max={20} changed={extraChanged} onChange={setExtraShuttles} />
+                                        <Stepper label="บัตรเล่นฟรี" value={freePlays} max={Math.max(currentRegs.length, freePlays)} changed={freeChanged} onChange={setFreePlays} last={currentRegs.length === 0} />
+                                    </>
+                                )}
+                                {isAdminUser && currentRegs.length > 0 && (
+                                    <>
+                                        <div className="p-4 flex justify-between items-center gap-3 border-b border-gray-200">
+                                            <span className="text-[17px] text-black">
+                                                {freeCount > 0 ? `(ผู้เล่น ${currentRegs.length} คน - บัตรฟรี ${freeCount} คน)` : `ผู้เล่น ${currentRegs.length} คน`} × {lc.perHead}
+                                            </span>
+                                            <span className={`text-[17px] text-right tabular-nums whitespace-nowrap ${diff >= 0 ? 'text-[#34C759]' : 'text-[#FF3B30]'}`}>
+                                                {collected} ฿ ({diff >= 0 ? '+' : '-'}{Math.abs(diff)} ฿)
+                                            </span>
+                                        </div>
+                                        <div className="p-4 flex justify-between items-center">
+                                            <span className="text-[17px] font-semibold text-black">ยอดโอนเข้าบัญชี</span>
+                                            <span className="text-[22px] font-bold text-[#34C759] tabular-nums">{collected} ฿</span>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                            {isAdminUser && countsChanged && (
+                                <div className="-mt-6 mb-8 flex gap-2">
+                                    <button onClick={() => { setExtraShuttles(Number(s.Extra_Shuttles) || 0); setFreePlays(Number(s.Free_Plays) || 0); }} className="flex-1 bg-white text-[#FF3B30] font-semibold py-3 rounded-[14px] shadow-sm active:opacity-70">ยกเลิก</button>
+                                    <button onClick={handleSaveCostCounts} disabled={submitting} className="flex-[2] bg-[#007AFF] text-white font-semibold py-3 rounded-[14px] active:opacity-80 disabled:opacity-50">บันทึก</button>
+                                </div>
+                            )}
+                        </>
+                    )}
+                    </>
+                );
+                const checklistBox = (
+                    <>
+                    {/* Admin checklist */}
+                    {isAdminUser && !si.isCancelled && (
+                        <div className="mb-8">
+                            <SectionTitle>เช็คลิสต์แอดมิน</SectionTitle>
+                            <div className="bg-white rounded-[20px] overflow-hidden shadow-sm">
+                                {TASKS.map((task, i) => {
+                                    const checked = pendingTasks[task.key] !== undefined ? pendingTasks[task.key] : isTrue(s[task.key]);
+                                    return (
+                                        <div key={task.key} onClick={() => !submitting && handleTaskToggleLocal(task.key)}
+                                            className={`p-4 flex justify-between items-center active:bg-gray-50 cursor-pointer ${i < TASKS.length - 1 ? 'border-b border-gray-200' : ''}`}>
+                                            <span className={`text-[17px] ${checked ? 'text-gray-400 line-through' : 'text-black'}`}>{task.label}</span>
+                                            <span role="switch" aria-checked={checked}
+                                                className={`${checked ? 'bg-[#34C759]' : 'bg-[#E9E9EA]'} relative inline-flex h-[31px] w-[51px] shrink-0 rounded-full transition-colors duration-300`}>
+                                                <span className={`${checked ? 'translate-x-[22px]' : 'translate-x-[2px]'} inline-block h-[27px] w-[27px] mt-[2px] rounded-full bg-white shadow transition duration-300`} />
+                                            </span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            {Object.keys(pendingTasks).length > 0 && (
+                                <div className="mt-3 flex gap-2">
+                                    <button onClick={() => setPendingTasks({})} className="flex-1 bg-white text-[#FF3B30] font-semibold py-3 rounded-[14px] shadow-sm active:opacity-70">ยกเลิก</button>
+                                    <button onClick={handleTaskSave} disabled={submitting} className="flex-[2] bg-[#007AFF] text-white font-semibold py-3 rounded-[14px] active:opacity-80 disabled:opacity-50">บันทึกเช็คลิสต์</button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    </>
+                );
+                const lineBox = (
+                    <>
+                    {/* LINE text */}
+                    {isAdminUser && (
+                        <div className="mb-8">
+                            <SectionTitle right={
+                                <span className="flex items-center gap-4">
+                                    <button onClick={handleCopyLineText} className={`text-[15px] font-medium ${copied ? 'text-[#34C759]' : 'text-[#007AFF] active:opacity-70'}`}>
+                                        {copied ? 'คัดลอกแล้ว' : 'คัดลอก'}
+                                    </button>
+                                    <button onClick={handleShareLineText} className="text-[15px] font-medium text-[#06C755] active:opacity-70">แชร์เข้า LINE</button>
+                                </span>
+                            }>ข้อความโพสต์ LINE</SectionTitle>
+                            <div className="bg-white rounded-[20px] overflow-hidden shadow-sm">
+                                <textarea id="line-export-text" rows="16" value={lineText} onChange={e => setLineText(e.target.value)}
+                                    className="w-full p-4 text-[15px] text-black bg-transparent outline-none resize-y" />
+                            </div>
+                            <p className="text-[13px] text-gray-500 px-4 mt-2">แก้ข้อความก่อนคัดลอกหรือแชร์ได้</p>
+                        </div>
+                    )}
+                    </>
+                );
+
                 return (
                     <div className="w-full max-w-md mx-auto pb-24 animate-in">
                         {/* Nav */}
@@ -2812,181 +3024,9 @@
                         </div>
 
                         <div className="px-4">
-                            {/* Info */}
-                            <div className={`bg-white rounded-[20px] shadow-sm p-5 mb-8 ${dim ? 'opacity-80' : ''}`}>
-                                <DateTile date={si.date} dim={dim} size="lg" />
-                                <h1 className="text-[28px] font-bold text-black mt-4 mb-2 tracking-tight leading-tight">
-                                    {fmtLong(si.date)}{si.isCancelled && ' (งด)'}
-                                </h1>
-                                <p className={`font-semibold text-[17px] mb-2 ${si.isCancelled ? 'text-gray-400 line-through' : 'text-black'}`}>
-                                    {timeRange(si.isWorkday)} • {s.Location}
-                                </p>
-                                <p className="text-[15px] text-gray-500 leading-relaxed">{rulesText}</p>
-                            </div>
-
-                            {/* Registration */}
-                            <SectionTitle>ลงชื่อ</SectionTitle>
-                            <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mb-8">
-                                {si.isCancelled ? (
-                                    <div className="p-5 text-center text-[15px] text-gray-500">รอบนี้งดเล่น</div>
-                                ) : myReg && !isEditing ? (
-                                    <>
-                                        <Row label="สถานะ" value={<span className={si.isPast ? 'text-gray-500' : 'text-[#34C759]'}>ลงชื่อแล้ว</span>} />
-                                        <Row label="เวลาเล่น" value={hoursLabel(hoursOf(myReg), si.isWorkday)} last={si.isPast} />
-                                        {si.isPast ? null : (
-                                            <>
-                                                <button onClick={() => setShowCancelConfirm(true)} disabled={submitting}
-                                                    className="w-full p-4 text-center text-[#FF3B30] text-[17px] active:bg-gray-50">
-                                                    ไม่สะดวกเล่นแล้ว
-                                                </button>
-                                            </>
-                                        )}
-                                    </>
-                                ) : (!myReg && !si.canRegister) ? (
-                                    <div className="p-6 text-center">
-                                        <IconClock size={30} className="text-gray-300 mx-auto mb-2" />
-                                        <div className="text-[17px] font-medium text-black">{closedReason}</div>
-                                    </div>
-                                ) : (
-                                    <>
-                                        <Row label="เวลา" value={timeRange(si.isWorkday)} />
-                                        <Row label="ค่าใช้จ่าย" value={`คนละ ${lc.perHead} ฿`} />
-                                        <button type="button" onClick={handleRegister} disabled={submitting}
-                                            className="w-full p-4 text-center font-semibold text-[#007AFF] text-[17px] active:bg-gray-50 disabled:opacity-50">
-                                            {submitting ? 'กำลังบันทึก...' : 'ลงชื่อ'}
-                                        </button>
-                                    </>
-                                )}
-                            </div>
-
-                            {/* Players */}
-                            <SectionTitle right={`รวม ${currentRegs.length} คน`}>รายชื่อ</SectionTitle>
-                            <div className="flex flex-col gap-3 mb-8">
-                                {si.isWorkday ? (
-                                    oneHourPlayers ? (
-                                        <>
-                                            <PlayerBox title="18:00 - 19:00" list={currentRegs.filter(inH1)} target={si.cap} />
-                                            <PlayerBox title="19:00 - 20:00" list={currentRegs.filter(inH2)} target={si.cap} />
-                                        </>
-                                    ) : (
-                                        <PlayerBox title="เล่น 2 ชั่วโมง" list={currentRegs} target={si.cap} />
-                                    )
-                                ) : (
-                                    <PlayerBox title="16:00 - 18:00" list={currentRegs} target={null} />
-                                )}
-                            </div>
-
-                            {/* Admin: add players (saves immediately) */}
-                            {isAdminUser && (
-                                <div className="mb-8">
-                                    <SectionTitle>เพิ่มผู้เล่น</SectionTitle>
-                                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden pt-3">
-                                        <AddPlayersBox users={users} rows={currentRegs} onAdd={addNow} showToast={showToast} />
-                                    </div>
-                                    <p className="text-[13px] text-gray-500 px-4 mt-2">แอดมินเพิ่มได้เกินโควตา ระบบไม่บล็อก</p>
-                                </div>
-                            )}
-
-                            {/* Admin: on-court pairing */}
-                            {isAdminUser && !si.isCancelled && (
-                                <LiveBoard key={s.Session_ID} sessionId={s.Session_ID} title={`${fmtShort(si.date)} ${s.Location || ''}`.trim()}
-                                    avoidText={appSettings.PAIRING_AVOID} onShare={shareToLine} showToast={showToast}
-                                    api={sendApiRequest} canSync={tokenFresh}
-                                    players={currentRegs.map(r => ({ ...playerOf(r.User_ID), hours: si.isWorkday && hoursOf(r) !== 'All' ? [inH1(r), inH2(r)] : undefined }))}
-                                    members={users.filter(u => u.User_ID).map(u => playerOf(u.User_ID))
-                                        .sort((a, b) => a.name.localeCompare(b.name, 'th'))} />
-                            )}
-
-                            {/* Cost */}
-                            {!si.isCancelled && (
-                                <>
-                                    <SectionTitle>ค่าใช้จ่าย</SectionTitle>
-                                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mb-8">
-                                        <Row label="ค่าคอร์ด" value={`${si.costs.court} ฿`} />
-                                        <Row label={`ลูกแบด ${lc.shuttleCount} ลูก`} value={`${lc.shuttle} ฿`} />
-                                        <div className={`p-4 flex justify-between items-center ${isAdminUser ? 'border-b border-gray-200' : ''}`}>
-                                            <span className="text-[17px] font-semibold text-black">คนละ</span>
-                                            <span className="text-[22px] font-bold text-[#34C759] tabular-nums">{lc.perHead} ฿</span>
-                                        </div>
-
-                                        {isAdminUser && (
-                                            <>
-                                                <Stepper label="เติมลูกเพิ่มหน้างาน" value={extraShuttles} max={20} changed={extraChanged} onChange={setExtraShuttles} />
-                                                <Stepper label="บัตรเล่นฟรี" value={freePlays} max={Math.max(currentRegs.length, freePlays)} changed={freeChanged} onChange={setFreePlays} last={currentRegs.length === 0} />
-                                            </>
-                                        )}
-                                        {isAdminUser && currentRegs.length > 0 && (
-                                            <>
-                                                <div className="p-4 flex justify-between items-center gap-3 border-b border-gray-200">
-                                                    <span className="text-[17px] text-black">
-                                                        {freeCount > 0 ? `(ผู้เล่น ${currentRegs.length} คน - บัตรฟรี ${freeCount} คน)` : `ผู้เล่น ${currentRegs.length} คน`} × {lc.perHead}
-                                                    </span>
-                                                    <span className={`text-[17px] text-right tabular-nums whitespace-nowrap ${diff >= 0 ? 'text-[#34C759]' : 'text-[#FF3B30]'}`}>
-                                                        {collected} ฿ ({diff >= 0 ? '+' : '-'}{Math.abs(diff)} ฿)
-                                                    </span>
-                                                </div>
-                                                <div className="p-4 flex justify-between items-center">
-                                                    <span className="text-[17px] font-semibold text-black">ยอดโอนเข้าบัญชี</span>
-                                                    <span className="text-[22px] font-bold text-[#34C759] tabular-nums">{collected} ฿</span>
-                                                </div>
-                                            </>
-                                        )}
-                                    </div>
-                                    {isAdminUser && countsChanged && (
-                                        <div className="-mt-6 mb-8 flex gap-2">
-                                            <button onClick={() => { setExtraShuttles(Number(s.Extra_Shuttles) || 0); setFreePlays(Number(s.Free_Plays) || 0); }} className="flex-1 bg-white text-[#FF3B30] font-semibold py-3 rounded-[14px] shadow-sm active:opacity-70">ยกเลิก</button>
-                                            <button onClick={handleSaveCostCounts} disabled={submitting} className="flex-[2] bg-[#007AFF] text-white font-semibold py-3 rounded-[14px] active:opacity-80 disabled:opacity-50">บันทึก</button>
-                                        </div>
-                                    )}
-                                </>
-                            )}
-
-                            {/* Admin checklist */}
-                            {isAdminUser && !si.isCancelled && (
-                                <div className="mb-8">
-                                    <SectionTitle>เช็คลิสต์แอดมิน</SectionTitle>
-                                    <div className="bg-white rounded-[20px] overflow-hidden shadow-sm">
-                                        {TASKS.map((task, i) => {
-                                            const checked = pendingTasks[task.key] !== undefined ? pendingTasks[task.key] : isTrue(s[task.key]);
-                                            return (
-                                                <div key={task.key} onClick={() => !submitting && handleTaskToggleLocal(task.key)}
-                                                    className={`p-4 flex justify-between items-center active:bg-gray-50 cursor-pointer ${i < TASKS.length - 1 ? 'border-b border-gray-200' : ''}`}>
-                                                    <span className={`text-[17px] ${checked ? 'text-gray-400 line-through' : 'text-black'}`}>{task.label}</span>
-                                                    <span role="switch" aria-checked={checked}
-                                                        className={`${checked ? 'bg-[#34C759]' : 'bg-[#E9E9EA]'} relative inline-flex h-[31px] w-[51px] shrink-0 rounded-full transition-colors duration-300`}>
-                                                        <span className={`${checked ? 'translate-x-[22px]' : 'translate-x-[2px]'} inline-block h-[27px] w-[27px] mt-[2px] rounded-full bg-white shadow transition duration-300`} />
-                                                    </span>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                    {Object.keys(pendingTasks).length > 0 && (
-                                        <div className="mt-3 flex gap-2">
-                                            <button onClick={() => setPendingTasks({})} className="flex-1 bg-white text-[#FF3B30] font-semibold py-3 rounded-[14px] shadow-sm active:opacity-70">ยกเลิก</button>
-                                            <button onClick={handleTaskSave} disabled={submitting} className="flex-[2] bg-[#007AFF] text-white font-semibold py-3 rounded-[14px] active:opacity-80 disabled:opacity-50">บันทึกเช็คลิสต์</button>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* LINE text */}
-                            {isAdminUser && (
-                                <div className="mb-8">
-                                    <SectionTitle right={
-                                        <span className="flex items-center gap-4">
-                                            <button onClick={handleCopyLineText} className={`text-[15px] font-medium ${copied ? 'text-[#34C759]' : 'text-[#007AFF] active:opacity-70'}`}>
-                                                {copied ? 'คัดลอกแล้ว' : 'คัดลอก'}
-                                            </button>
-                                            <button onClick={handleShareLineText} className="text-[15px] font-medium text-[#06C755] active:opacity-70">แชร์เข้า LINE</button>
-                                        </span>
-                                    }>ข้อความโพสต์ LINE</SectionTitle>
-                                    <div className="bg-white rounded-[20px] overflow-hidden shadow-sm">
-                                        <textarea id="line-export-text" rows="16" value={lineText} onChange={e => setLineText(e.target.value)}
-                                            className="w-full p-4 text-[15px] text-black bg-transparent outline-none resize-y" />
-                                    </div>
-                                    <p className="text-[13px] text-gray-500 px-4 mt-2">แก้ข้อความก่อนคัดลอกหรือแชร์ได้</p>
-                                </div>
-                            )}
+                            {workMode
+                                ? <>{costBox}{checklistBox}{addBox}{liveBox}{playersBox}{infoBox}{registerBox}{lineBox}</>
+                                : <>{infoBox}{registerBox}{playersBox}{addBox}{liveBox}{costBox}{checklistBox}{lineBox}</>}
                         </div>
 
                         {/* Admin manager */}
