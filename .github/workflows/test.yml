@@ -14,5 +14,6 @@ jobs:
         with:
           node-version: 20
       - run: node tests/run.js
+      - run: node tests/pairing.js
       # the Pages build must keep working (fails if index.html no longer has the parts build.mjs expects)
       - run: npm ci && node scripts/build.mjs

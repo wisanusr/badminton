@@ -275,6 +275,242 @@
             };
         };
 
+        // ===================== จัดคู่ตีแบด =====================
+        // pairing:start (JS ล้วน ไม่มี JSX: tests/pairing.js ตัดส่วนนี้ไปทดสอบใน Node)
+        // จัดคู่หน้างาน: จัดทีละเกมทีละคอร์ดจากคนที่เช็กอินอยู่ที่สนาม โดยจำทุกเกมที่เล่นไปแล้ว
+        // ลำดับสิทธิ์ลงเล่น: ไม่ติด 2 เกมติด > พักมาแล้ว > เล่นน้อย (เทียบกับเวลาที่อยู่สนาม) > ยังไม่ได้เล่นเลย: มาก่อนได้ลงก่อน
+        // แล้วจัดคู่ให้เลี่ยงคู่หู/คู่แข่งซ้ำ ถ่วงฝีมือ B/M/H และไม่ให้คนใน PAIRING_AVOID อยู่คอร์ดเดียวกัน
+        const PAIR_SKILLS = { B: 1, M: 2, H: 3 };
+        const pairSkillOf = v => PAIR_SKILLS[String(v || '').trim().toUpperCase()] || 0;   // 0 = ยังไม่ระบุ (คิดเป็น M)
+        const PAIR_GAME_MIN = 10;   // นาทีต่อเกม ใช้เทียบว่าใครเล่นน้อยเมื่อเทียบกับเวลาที่อยู่สนาม
+        const PAIR_COST = {
+            avoid: 100000,         // คนที่ห้ามเจอกันอยู่คอร์ดเดียวกัน
+            swap: 2000,            // ข้ามลำดับสิทธิ์ลงเล่น 1 คนเพื่อเลี่ยงกฎข้างบน (คูณเพิ่มถ้าคนที่ลงแทนเพิ่งเล่นเกมก่อน)
+            partnerLast: 1000,     // คู่หูซ้ำกับเกมก่อนหน้าของทั้งคู่
+            matchLast: 500,        // สองคู่เดิมเจอกันซ้ำจากเกมก่อนหน้า
+            matchEver: 150,        // สองคู่เดิมเคยเจอกันแล้วในรอบนี้ (ต่อครั้ง)
+            partnerEver: 60,       // เคยเป็นคู่หูกันแล้ว (ต่อครั้ง)
+            opponentEver: 10,      // เคยเป็นคู่แข่งกันแล้ว (ต่อครั้ง)
+            teamSkill: 30          // ต่อ 1 ระดับที่สองฝั่งต่างกัน
+        };
+
+        // "แทน, หวาน / ต้อม; A / B" → [[['แทน','หวาน'],['ต้อม']], [['A'],['B']]] คนฝั่งซ้ายห้ามอยู่คอร์ดเดียวกับคนฝั่งขวา
+        const parseAvoidRules = text => String(text || '').split(/[;\n]/).map(part => {
+            const sides = part.split('/');
+            if (sides.length !== 2) return null;
+            const names = s => s.split(',').map(x => x.trim()).filter(Boolean);
+            const a = names(sides[0]), b = names(sides[1]);
+            return a.length && b.length ? [a, b] : null;
+        }).filter(Boolean);
+
+        const pairKey = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+        const matchKey = (t1, t2) => [pairKey(t1[0], t1[1]), pairKey(t2[0], t2[1])].sort().join('#');
+        const pairShuffle = (arr, rnd) => {
+            const a = arr.slice();
+            for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+            return a;
+        };
+        const gameIds = g => g.teams[0].concat(g.teams[1]);
+
+        // สถิติจากเกมที่เริ่มแล้ว games: [{ teams: [[a,b],[c,d]], start, end }]
+        // start/end = ลำดับเหตุการณ์ (นับเพิ่มทุกครั้งที่เริ่มหรือจบเกม) end = null คือยังเล่นอยู่
+        const pairStats = games => {
+            const st = { games: {}, partner: {}, opponent: {}, match: {}, lastPartner: {}, lastMatch: {} };
+            games.slice().sort((a, b) => a.start - b.start).forEach(g => {
+                const [t1, t2] = g.teams;
+                const mk = matchKey(t1, t2);
+                [t1, t2].forEach(t => {
+                    const k = pairKey(t[0], t[1]);
+                    st.partner[k] = (st.partner[k] || 0) + 1;
+                    t.forEach(id => { st.games[id] = (st.games[id] || 0) + 1; st.lastPartner[id] = k; st.lastMatch[id] = mk; });
+                });
+                t1.forEach(a => t2.forEach(b => { const k = pairKey(a, b); st.opponent[k] = (st.opponent[k] || 0) + 1; }));
+                st.match[mk] = (st.match[mk] || 0) + 1;
+            });
+            return st;
+        };
+
+        // เล่นติดกันมากี่เกม ณ เหตุการณ์ now: สองเกมของคนนี้นับว่าติดกันถ้าระหว่างนั้นไม่มีเกมไหนเริ่มโดยไม่มีเขา (= เขาไม่ได้พัก)
+        const pairStreak = (id, games, now) => {
+            const mine = games.filter(g => g.end !== null && gameIds(g).includes(id)).sort((a, b) => b.start - a.start);
+            let streak = 0, cursor = now;
+            for (const g of mine) {
+                if (games.some(o => o.start > g.end && o.start < cursor)) break;
+                streak++;
+                cursor = g.start;
+            }
+            return streak;
+        };
+
+        // คะแนนของเกมหนึ่งเกม (ยิ่งน้อยยิ่งดี) พร้อมหมายเหตุสิ่งที่เลี่ยงไม่ได้
+        const scoreGame = (teams, ctx) => {
+            const { st, skill, avoidPairs, names } = ctx;
+            let cost = 0;
+            const notes = [];
+            const [t1, t2] = teams;
+            const all = t1.concat(t2);
+            for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+                if (avoidPairs[pairKey(all[i], all[j])]) { cost += PAIR_COST.avoid; notes.push(`${names(all[i])} กับ ${names(all[j])} อยู่คอร์ดเดียวกัน`); }
+            }
+            [t1, t2].forEach(t => {
+                const k = pairKey(t[0], t[1]);
+                if (st.lastPartner[t[0]] === k && st.lastPartner[t[1]] === k) { cost += PAIR_COST.partnerLast; notes.push(`${names(t[0])} คู่กับ ${names(t[1])} ซ้ำเกมก่อน`); }
+                cost += (st.partner[k] || 0) * PAIR_COST.partnerEver;
+            });
+            const mk = matchKey(t1, t2);
+            if (all.every(id => st.lastMatch[id] === mk)) { cost += PAIR_COST.matchLast; notes.push('สองคู่นี้เจอกันซ้ำเกมก่อน'); }
+            cost += (st.match[mk] || 0) * PAIR_COST.matchEver;
+            t1.forEach(a => t2.forEach(b => { cost += (st.opponent[pairKey(a, b)] || 0) * PAIR_COST.opponentEver; }));
+            cost += Math.abs(skill(t1[0]) + skill(t1[1]) - skill(t2[0]) - skill(t2[1])) * PAIR_COST.teamSkill;
+            return { cost, notes };
+        };
+
+        // 4 คนแบ่งเป็นสองฝั่งได้ 3 แบบ เลือกแบบที่คะแนนดีสุด
+        const arrangeGame = (ids, ctx, rnd) => {
+            const [a, b, x, y] = pairShuffle(ids, rnd);
+            let best = null;
+            [[[a, b], [x, y]], [[a, x], [b, y]], [[a, y], [b, x]]].forEach(teams => {
+                const sc = scoreGame(teams, ctx);
+                if (!best || sc.cost < best.cost) best = { teams, cost: sc.cost, notes: sc.notes };
+            });
+            return best;
+        };
+
+        // กฎห้ามอยู่คอร์ดเดียวกัน (ชื่อ) → { "idA|idB": true }
+        const pairAvoidMap = (avoid, players) => {
+            const out = {};
+            const norm = s => String(s || '').trim().toLowerCase();
+            const ids = list => players.filter(p => list.some(n => norm(n) === norm(p.name))).map(p => p.id);
+            avoid.forEach(([a, b]) => ids(a).forEach(x => ids(b).forEach(y => { if (x !== y) out[pairKey(x, y)] = true; })));
+            return out;
+        };
+
+        const pairCmp = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+
+        // คิวรอลง เรียงตามสิทธิ์: players = [{ id, name, skill, arrivedAt (ms), order (ลำดับที่มาถึง) }] เฉพาะคนที่ว่างอยู่
+        // now = ลำดับเหตุการณ์ปัจจุบัน, clock = เวลาจริง (ms) ใช้คิดเวลาที่อยู่สนาม
+        const pairQueue = ({ players, games, now, clock }) => {
+            const st = pairStats(games);
+            return players.map(p => {
+                const streak = pairStreak(p.id, games, now);
+                const n = st.games[p.id] || 0;
+                const slots = Math.max(1, (clock - p.arrivedAt) / 60000 / PAIR_GAME_MIN);
+                return { id: p.id, order: p.order, streak, games: n, rank: [streak >= 2 ? 1 : 0, streak > 0 ? 1 : 0, Math.round(10 * n / slots), n === 0 ? p.order : 0] };
+            }).sort((a, b) => pairCmp(a.rank, b.rank) || a.order - b.order);
+        };
+
+        // เสนอเกมถัดไปของคอร์ดที่ว่าง คืน { teams, notes } หรือ null ถ้าคนว่างไม่ถึง 4
+        // allPlayers = ทุกคนในรอบ (ใช้หาชื่อ/ฝีมือ) ส่วน players = คนที่ว่างพร้อมลง
+        const proposeGame = ({ players, games, now, clock, avoid = [], allPlayers, random = Math.random }) => {
+            if (players.length < 4) return null;
+            const rnd = random;
+            const everyone = allPlayers || players;
+            const byId = {};
+            everyone.forEach(p => { byId[p.id] = p; });
+            const names = id => (byId[id] ? byId[id].name : id);
+            const skill = id => (byId[id] && byId[id].skill) || PAIR_SKILLS.M;
+            const avoidPairs = pairAvoidMap(avoid, everyone);
+            const rows = pairQueue({ players, games, now, clock });
+            const ctx = { st: pairStats(games), skill, avoidPairs, names };
+            const streakOf = {};
+            rows.forEach(r => { streakOf[r.id] = r.streak; });
+
+            // คนที่สิทธิ์ดีกว่าเส้นตัดได้ลงแน่นอน คนที่สิทธิ์เท่ากับเส้นตัดสุ่มเลือกหลายแบบแล้วดูว่าแบบไหนจัดคู่ได้ดีสุด
+            const edge = rows[3].rank;
+            const sure = rows.filter(x => pairCmp(x.rank, edge) < 0).map(x => x.id);
+            const tied = rows.filter(x => pairCmp(x.rank, edge) === 0).map(x => x.id);
+            const samples = tied.length > 4 - sure.length ? 25 : 1;
+            let best = null;
+            for (let s = 0; s < samples; s++) {
+                const a = arrangeGame(sure.concat(pairShuffle(tied, rnd).slice(0, 4 - sure.length)), ctx, rnd);
+                if (!best || a.cost < best.cost) best = a;
+            }
+            // ลำดับสิทธิ์ทำให้คนที่ห้ามเจอกันต้องลงพร้อมกัน: ลองสลับทีละคนกับคนที่รออยู่ (ยอมเสียลำดับ หรือให้ใครเล่นเกินเกมติด ดีกว่าผิดกฎนี้)
+            if (best.cost >= PAIR_COST.avoid) {
+                const chosen = best.teams[0].concat(best.teams[1]);
+                const bench = rows.filter(r => !chosen.includes(r.id)).map(r => r.id);
+                chosen.forEach(x => bench.forEach(y => {
+                    const a = arrangeGame(chosen.map(id => (id === x ? y : id)), ctx, rnd);
+                    const cost = a.cost + PAIR_COST.swap * (1 + streakOf[y]);
+                    if (cost < best.cost) best = { ...a, cost };
+                }));
+            }
+            const notes = best.notes.slice();
+            gameIds(best).forEach(id => { if (streakOf[id] >= 2) notes.push(`${names(id)} เล่นเกมที่ ${streakOf[id] + 1} ติดกัน (คนไม่พอ)`); });
+            return { teams: best.teams, notes };
+        };
+
+        // คิวเกมล่วงหน้า (ใช้ร่วมกันทุกคอร์ด คอร์ดไหนว่างหยิบเกมแรกไปลง) คืนคิวใหม่ ahead เกม
+        // queue = คิวเดิม [{ teams, notes, locked }] (null หรือไม่มี teams = ช่องที่ให้จัดใหม่) เกมที่ locked (แอดมินแก้เอง/ล็อกไว้) คงเดิมเสมอถ้าทุกคนยังอยู่
+        // replan = จัดเกมที่ไม่ล็อกใหม่ (มีคนมา/กลับ) ไม่งั้นเก็บเกมเดิมไว้แล้วเติมท้ายคิว (เริ่ม/จบเกม ไม่สุ่มเกมที่ประกาศไปแล้วใหม่)
+        // เกมในคิวคิดต่อกันเป็นลำดับ: ถือว่าเกมก่อนหน้าเล่นจบแล้ว
+        // courtFreeAt = เวลา (ms) ที่แต่ละคอร์ดจะว่าง ถ้าส่งมา จะประมาณเวลาเริ่มของแต่ละเกมในคิว (เกมละ PAIR_GAME_MIN นาที)
+        //   แล้วกันคนที่ยังเล่นอยู่ในเกมที่เวลาทับกัน และคนที่ต้องกลับก่อนเกมจบ (players[].leaveAt) ไม่ส่ง = กันคนในอีก (courts - 1) เกมล่าสุด
+        const planQueue = ({ players, games, queue = [], ahead = 2, courts = 1, now, clock, courtFreeAt, avoid = [], allPlayers, replan = false, random = Math.random }) => {
+            const gameMs = PAIR_GAME_MIN * 60000;
+            const present = new Set(players.map(p => p.id));
+            const leaveAt = {};
+            players.forEach(p => { if (p.leaveAt) leaveAt[p.id] = p.leaveAt; });
+            const everyone = allPlayers || players;
+            let t = now;
+            // ประวัติสมมติ: เกมที่กำลังเล่นจบตามลำดับที่เริ่ม แล้วต่อด้วยเกมในคิวทีละเกม
+            const history = games.filter(g => g.end !== null);
+            const running = games.filter(g => g.end === null).sort((a, b) => a.start - b.start);
+            const free = courtFreeAt ? courtFreeAt.slice() : null;
+            // seq = เกมที่กำลังเล่น/อยู่ในคิว พร้อมเวลาจบโดยประมาณ (ใช้หาคนที่ยังเล่นอยู่ตอนเกมถัดไปเริ่ม)
+            const seq = running.map((g, i) => ({ g, until: free ? Math.max(free[g.court] || clock, clock) : i }));
+            running.forEach(g => history.push({ ...g, end: ++t }));
+            const out = [];
+            for (let k = 0; k < Math.max(ahead, queue.filter(q => q && q.teams && q.locked).length); k++) {
+                let at = clock, court = -1;
+                if (free) { court = free.indexOf(Math.min(...free)); at = Math.max(clock, free[court]); }
+                const busy = new Set((free ? seq.filter(x => x.until > at) : seq.slice(Math.max(0, seq.length - (courts - 1)))).flatMap(x => gameIds(x.g)));
+                const canPlay = id => present.has(id) && !(leaveAt[id] && at + gameMs > leaveAt[id]);
+                const old = queue[k];
+                const keep = old && old.teams && gameIds(old).every(id => present.has(id)) && (old.locked || (!replan && gameIds(old).every(canPlay)));
+                let g;
+                if (keep) {
+                    g = old.locked ? { ...old, notes: checkGame({ teams: old.teams, games: history, avoid, allPlayers: everyone }) } : old;
+                } else {
+                    const p = proposeGame({ players: players.filter(x => !busy.has(x.id) && canPlay(x.id)), games: history, now: t, clock: at, avoid, allPlayers: everyone, random });
+                    if (!p) break;
+                    g = { teams: p.teams, notes: p.notes, locked: false };
+                }
+                if (free) g = { ...g, at };
+                out.push(g);
+                seq.push({ g, until: free ? at + gameMs : seq.length });
+                if (free) free[court] = at + gameMs;
+                history.push({ teams: g.teams, start: ++t, end: ++t });
+            }
+            return out;
+        };
+
+        // เลขคู่ตายตัว (คู่ที่ 1, 2, 3 ... ทั้งคืน): คู่ที่ยังอยู่ใช้เลขเดิม คู่ที่จัดใหม่แทนช่องเดิมใช้เลขของช่องนั้น
+        // คู่ที่เติมท้ายคิวได้เลขถัดจากเลขสูงสุดที่มี  planned = คิวจาก planQueue, oldQueue = คิวก่อนจัด, games = คู่ที่เริ่มแล้ว
+        const numberQueue = (planned, oldQueue, games) => {
+            const used = new Set(games.map(g => g.no).filter(Boolean));
+            let next = Math.max(0, ...games.map(g => g.no || 0), ...oldQueue.map(q => (q && q.no) || 0)) + 1;
+            return planned.map((g, k) => {
+                const slot = oldQueue[k] && oldQueue[k].no;
+                const no = g.no && !used.has(g.no) ? g.no : slot && !used.has(slot) ? slot : next++;
+                used.add(no);
+                return { ...g, no };
+            });
+        };
+
+        // เหลือกี่เกมจนถึงเวลาเลิก (endAt) ถ้าแต่ละคอร์ดว่างตามเวลา courtFreeAt
+        const pairGamesLeft = (courtFreeAt, endAt) =>
+            courtFreeAt.reduce((n, f) => n + Math.max(0, Math.floor((endAt - f) / (PAIR_GAME_MIN * 60000))), 0);
+
+        // คะแนนและหมายเหตุของเกมที่แอดมินจัดเอง/สลับคน (ใช้ตัววัดเดียวกับตอนเสนอ)
+        const checkGame = ({ teams, games, avoid = [], allPlayers }) => {
+            const byId = {};
+            allPlayers.forEach(p => { byId[p.id] = p; });
+            const avoidPairs = pairAvoidMap(avoid, allPlayers);
+            return scoreGame(teams, { st: pairStats(games), skill: id => (byId[id] && byId[id].skill) || PAIR_SKILLS.M, avoidPairs, names: id => (byId[id] ? byId[id].name : id) }).notes;
+        };
+        // pairing:end
+
         // ===================== Icons =====================
         const Svg = ({ size, className, children }) => (
             <svg className={className} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
@@ -327,14 +563,14 @@
         );
 
         // แถว +/- ในการ์ดค่าใช้จ่าย (แอดมิน) changed = ยังไม่ได้บันทึก
-        const Stepper = ({ label, value, max, changed, onChange, last }) => (
+        const Stepper = ({ label, value, min = 0, max, changed, onChange, last }) => (
             <div className={`p-4 flex justify-between items-center ${last ? '' : 'border-b border-gray-200'}`}>
                 <div>
                     <div className="text-[17px] text-black">{label}</div>
                     {changed && <div className="text-[13px] text-[#FF9500]">ยังไม่ได้บันทึก</div>}
                 </div>
                 <div className="flex items-center gap-3 bg-[#E9E9EA] rounded-[10px] p-1">
-                    <button onClick={() => onChange(Math.max(0, value - 1))} className="w-8 h-8 rounded-[8px] bg-white shadow-sm text-lg active:opacity-70">-</button>
+                    <button onClick={() => onChange(Math.max(min, value - 1))} className="w-8 h-8 rounded-[8px] bg-white shadow-sm text-lg active:opacity-70">-</button>
                     <span className="font-semibold text-[17px] w-5 text-center tabular-nums">{value}</span>
                     <button onClick={() => onChange(Math.min(max, value + 1))} className="w-8 h-8 rounded-[8px] bg-white shadow-sm text-lg active:opacity-70">+</button>
                 </div>
@@ -597,6 +833,7 @@
             NOTIFY_PLAY_DAY:      { label: 'ข้อความแจ้งเตือน 10:00', type: 'bool', note: 'ส่งข้อความโพสต์กลุ่มให้แอดมินตอน 10:00 ของวันเล่น' },
             BOOK_NOTICE_DAYS:     { label: 'แจ้งจำนวนคนเพื่อจองคอร์ด', unit: 'วัน', type: 'number', note: 'แจ้งแอดมินก่อนวันเล่นกี่วัน (เฉพาะรอบวันหยุด)' },
             POINT_CARD_URL:       { label: 'ลิงก์รับแต้ม', type: 'text', hint: 'https://...', note: 'ลิงก์บัตรสะสมแต้มจาก LINE OA ใช้ลิงก์เดียวกับทุกรอบ ผู้เล่นที่ลงชื่อจะได้การ์ดราว 08:30 ของวันถัดจากวันเล่น กดรับได้ถึงเที่ยงคืนวันนั้น ระบบเช็กสิทธิ์ก่อนเปิดลิงก์ ว่าง = ไม่ส่งการ์ด' },
+            PAIRING_AVOID:        { label: 'ห้ามอยู่คอร์ดเดียวกัน', type: 'text', hint: 'แทน, หวาน / ต้อม', note: 'คนฝั่งซ้ายของ / จะไม่ถูกจัดลงคอร์ดเดียวกับคนฝั่งขวา (อยู่เกมเดียวกันต่างคอร์ดได้) ชื่อต้องตรงกับชื่อสมาชิก คั่นชื่อด้วย , และคั่นหลายกฎด้วย ;' },
             POINT_CARD_EXPIRES:   { label: 'วันหมดอายุของลิงก์', type: 'date', note: 'ถึงวันนี้ระบบแจ้งแอดมินให้ใส่ลิงก์ใหม่ ผ่านวันนี้ไปแล้วผู้เล่นจะไม่ได้รับการ์ดและกดรับแต้มไม่ได้ ว่าง = ไม่มีวันหมดอายุ' }
         };
         const SETTING_GROUPS = [
@@ -604,7 +841,8 @@
             { title: 'วันหยุด', keys: ['WEEKEND_MIN_PLAYERS', 'WEEKEND_CLOSE_DAYS'] },
             { title: 'ค่าใช้จ่าย', keys: ['COST_SPLIT_BASE', 'SHUTTLECOCK_PRICE', 'SHUTTLES_PER_SESSION'] },
             { title: 'การแจ้งเตือนแอดมิน', keys: ['NOTIFY_CANCEL', 'NOTIFY_PLAY_DAY', 'BOOK_NOTICE_DAYS'] },
-            { title: 'บัตรสะสมแต้ม', keys: ['POINT_CARD_URL', 'POINT_CARD_EXPIRES'] }
+            { title: 'บัตรสะสมแต้ม', keys: ['POINT_CARD_URL', 'POINT_CARD_EXPIRES'] },
+            { title: 'จัดคู่', keys: ['PAIRING_AVOID'] }
         ];
         const HIDDEN_SETTING_KEYS = ['ADMIN_LINE_IDS', 'LINE_CHANNEL_ID', 'LINE_POST_TEMPLATE'];
         const SAMPLE_TPL_VARS = {
@@ -774,6 +1012,434 @@
                         </div>
                     )}
                 </>
+            );
+        }
+
+        const copyText = async text => {
+            try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            const ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            return ok;
+        };
+
+        const SKILL_LETTER = ['?', 'B', 'M', 'H'];
+        const SKILL_TONE = ['bg-gray-200 text-gray-500', 'bg-emerald-100 text-emerald-700', 'bg-sky-100 text-sky-700', 'bg-rose-100 text-rose-700'];
+        const SkillDot = ({ skill }) => (
+            <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[11px] font-bold shrink-0 ${SKILL_TONE[skill]}`}>{SKILL_LETTER[skill]}</span>
+        );
+
+        // จัดคู่หน้างาน (แอดมิน): เช็กอินตามลำดับที่มาถึง → ระบบจัดคิวเกมล่วงหน้า (ใช้ร่วมทุกคอร์ด) → แตะชื่อเพื่อสลับคน
+        // → คอร์ดว่างกด "เริ่มเกม" หยิบเกมแรกในคิว → "จบเกม" แล้วระบบเติมคิวต่อ
+        // มีคนมา/กลับ = จัดเกมในคิวที่ยังไม่ล็อกใหม่ (เกมที่แก้เองหรือกดล็อกคงเดิม) เริ่ม/จบเกม = เติมท้ายคิว ไม่สุ่มเกมเดิมใหม่
+        // ทุกคนที่ลงชื่อเช็กอินครบแล้ว (รู้แล้วว่าคืนนี้มีใครบ้าง) = จัดคิวยาวจนถึงเวลาเลิก (endAt) แทนจำนวนเกมล่วงหน้าที่ตั้งไว้
+        // players = คนที่ลงชื่อในรอบ [{ id, name, skill, leaveAt? (ms ลงแค่ชั่วโมงแรก) }], members = สมาชิกทั้งหมด (เลือกเป็น walk-in)
+        // กระดานใช้ร่วมกันระหว่างแอดมินผ่านชีท Live (backend/Live.gs): กดแล้วหน้าจอเปลี่ยนทันที แล้วค่อยบันทึกเบื้องหลัง
+        // ถ้าแอดมินอีกคนบันทึกไปก่อน (เวอร์ชันไม่ตรง) server ส่งกระดานล่าสุดมา หน้าเว็บทำสิ่งที่กดค้างไว้ซ้ำบนกระดานนั้นแล้วบันทึกใหม่
+        // เครื่องอื่นดึงกระดานใหม่ทุก LIVE_POLL_MS ขณะเปิดหน้า และทันทีที่กลับมาที่แอป สำเนาในเครื่อง (localStorage) ใช้ตอนเน็ตหลุด
+        const LIVE_EMPTY = { courts: 1, ahead: 2, tick: 0, checkins: [], extra: [], games: [], queue: [] };
+        const LIVE_POLL_MS = 10000;
+        const liveBoardOf = state => ({ ...LIVE_EMPTY, ...(state || {}) });
+        function LiveBoard({ sessionId, title, players, members, endAt, avoidText, api, canSync, onShare, showToast }) {
+            const store = 'board_' + sessionId;
+            const saved = useMemo(() => cacheRead(store) || {}, [store]);   // { board, version, dirty }
+            const [st, setSt] = useState(() => liveBoardOf(saved.board));
+            const [sel, setSel] = useState(null);           // ชื่อที่แตะไว้รอสลับ: { q, t, i } ในคิว หรือ { id } คนที่ยังไม่มีคิว
+            const [pickWalkIn, setPickWalkIn] = useState(false);
+            const [copied, setCopied] = useState(false);
+            const [sync, setSync] = useState('loading');    // loading | ok | saving | offline | error
+
+            // ---- ซิงก์กับชีท ----
+            const stRef = useRef(st);                       // กระดานล่าสุดในเครื่อง (อ่านได้ทันทีโดยไม่รอ render)
+            const verRef = useRef(saved.version || 0);      // เวอร์ชันบน server ที่กระดานนี้แก้ต่อมา
+            const pendingRef = useRef(saved.dirty ? [{ fn: s => s, replan: false }] : []);   // สิ่งที่กดแล้วยังไม่ได้บันทึก (ไว้ทำซ้ำถ้าชนกัน)
+            const savingRef = useRef(false);
+            const commit = board => {
+                stRef.current = board;
+                setSt(board);
+                cacheWrite(store, { board, version: verRef.current, dirty: pendingRef.current.length > 0 });
+            };
+            const flush = async () => {
+                if (savingRef.current || !pendingRef.current.length) return;
+                savingRef.current = true;
+                setSync('saving');
+                const sending = pendingRef.current.length;
+                let next = 'ok';
+                try {
+                    const r = await api('liveSave', { session_id: sessionId, state: stRef.current, base_version: verRef.current });
+                    if (r.status === 'success') {
+                        verRef.current = r.data.version;
+                        pendingRef.current = pendingRef.current.slice(sending);
+                        commit(stRef.current);
+                    } else if (r.status === 'conflict') {
+                        // แอดมินอีกคนบันทึกก่อน: ทำสิ่งที่กดค้างไว้ซ้ำบนกระดานล่าสุดแล้วส่งใหม่
+                        let board = liveBoardOf(r.data.state);
+                        pendingRef.current.forEach(a => { board = refresh(a.fn(board), a.replan); });
+                        verRef.current = r.data.version;
+                        setSel(null);
+                        commit(board);
+                    } else {
+                        next = 'error';
+                        showToast(r.message || 'บันทึกการจัดคู่ไม่สำเร็จ', 'error');
+                    }
+                } catch (e) {
+                    next = 'offline';
+                }
+                savingRef.current = false;
+                if (next === 'ok' && pendingRef.current.length) return flush();
+                setSync(next);
+            };
+            const pull = async () => {
+                if (savingRef.current || pendingRef.current.length) return;
+                try {
+                    const r = await api('liveGet', { session_id: sessionId });
+                    if (r.status !== 'success' || savingRef.current || pendingRef.current.length) return;
+                    if (r.data.version > verRef.current) {
+                        verRef.current = r.data.version;
+                        setSel(null);
+                        commit(liveBoardOf(r.data.state));
+                    } else if (r.data.version === 0 && stRef.current.checkins.length) {
+                        pendingRef.current.push({ fn: s => s, replan: false });   // มีแต่ในเครื่อง (ก่อนมีระบบซิงก์/ตอนเน็ตหลุด): ส่งขึ้นชีท
+                        return flush();
+                    }
+                    setSync('ok');
+                } catch (e) {
+                    setSync('offline');
+                }
+            };
+            const latest = useRef(null);
+            latest.current = { flush, pull };   // ตัวจับเวลาเรียกฟังก์ชันของ render ล่าสุด (รายชื่อ/กติกาอาจเปลี่ยน)
+            useEffect(() => {
+                // canSync = token ยังไม่ใกล้หมดอายุ: ดึง/ส่งเองเบื้องหลังจะได้ไม่เด้งให้เข้าสู่ระบบใหม่ระหว่างที่ไม่ได้กดอะไร
+                const tick = () => {
+                    if (document.visibilityState !== 'visible' || !canSync()) return;
+                    if (pendingRef.current.length) latest.current.flush(); else latest.current.pull();
+                };
+                tick();
+                const timer = setInterval(tick, LIVE_POLL_MS);
+                document.addEventListener('visibilitychange', tick);
+                return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+            }, [sessionId]);
+
+            const avoid = parseAvoidRules(avoidText);
+            const everyoneOf = s => players.concat(s.extra.filter(x => !players.some(p => p.id === x.id)));
+            const everyone = everyoneOf(st);
+            const byId = {};
+            everyone.forEach(p => { byId[p.id] = p; });
+            const nameOf = id => (byId[id] ? byId[id].name : 'ไม่ทราบชื่อ');
+
+            const gameMs = PAIR_GAME_MIN * 60000;
+            // เวลาที่แต่ละคอร์ดจะว่าง (เกมที่เล่นอยู่ถือว่าจบตอนครบ 10 นาที เกินแล้ว = ว่างตอนนี้)
+            const courtFreeAt = (s, clock) => Array.from({ length: s.courts }, (_, c) => {
+                const g = s.games.find(x => x.end === null && x.court === c);
+                return g ? Math.max(clock, g.startedAt + gameMs) : clock;
+            });
+            const allIn = s => players.length > 0 && players.every(p => s.checkins.some(c => c.id === p.id));
+            // ความยาวคิว: มาครบแล้ว = ถึงเวลาเลิก ไม่งั้นตามที่ตั้งไว้
+            const aheadOf = (s, clock) => (allIn(s) && endAt ? Math.max(1, pairGamesLeft(courtFreeAt(s, clock), endAt)) : s.ahead);
+
+            // จัดคิวใหม่จากสถานะ s (replan = มีคนมา/กลับ/เปลี่ยนจำนวนคอร์ด)
+            const refresh = (s, replan) => {
+                const clock = Date.now();
+                const all = everyoneOf(s);
+                const find = id => all.find(p => p.id === id) || { id, name: id };
+                const here = s.checkins.map((c, order) => ({ ...c, order })).filter(c => !c.left).map(c => ({ ...find(c.id), arrivedAt: c.at, order: c.order }));
+                const planned = planQueue({ players: here, games: s.games, queue: s.queue, ahead: aheadOf(s, clock), courts: s.courts, now: s.tick, clock,
+                    courtFreeAt: courtFreeAt(s, clock), avoid, allPlayers: all, replan });
+                return { ...s, queue: numberQueue(planned, s.queue, s.games) };
+            };
+            // ทุกการกดผ่านที่นี่: แก้กระดานในเครื่องทันที จำไว้ในรายการรอบันทึก แล้วส่งขึ้นชีท
+            const update = (fn, replan = false) => {
+                setSel(null);
+                pendingRef.current.push({ fn, replan });
+                commit(refresh(fn(stRef.current), replan));
+                flush();
+            };
+
+            const checkin = id => st.checkins.find(c => c.id === id);
+            const here = st.checkins.map((c, order) => ({ ...c, order })).filter(c => !c.left);
+            const live = st.games.filter(g => g.end === null);
+            const onCourt = c => live.find(g => g.court === c);
+            const playingNow = new Set(live.flatMap(gameIds));
+            const gamesOf = id => st.games.filter(g => gameIds(g).includes(id)).length;
+
+            // ---- เช็กอิน ----
+            const tapPlayer = id => {
+                const c = checkin(id);
+                if (!c) return update(s => ({ ...s, checkins: [...s.checkins, { id, at: Date.now(), left: false }] }), true);
+                if (c.left) {
+                    if (window.confirm(`${nameOf(id)} กลับมาเล่นต่อ?`)) update(s => ({ ...s, checkins: s.checkins.map(x => x.id === id ? { ...x, left: false, at: Date.now() } : x) }), true);
+                    return;
+                }
+                if (playingNow.has(id)) return showToast(`${nameOf(id)} กำลังเล่นอยู่ จบเกมก่อน`, 'error');
+                if (gamesOf(id) === 0) {
+                    if (window.confirm(`ยกเลิกเช็กอิน ${nameOf(id)}?`)) update(s => ({ ...s, checkins: s.checkins.filter(x => x.id !== id) }), true);
+                } else if (window.confirm(`${nameOf(id)} กลับบ้านแล้ว? (จะไม่ถูกจัดลงเกมอีก)`)) {
+                    update(s => ({ ...s, checkins: s.checkins.map(x => x.id === id ? { ...x, left: true } : x) }), true);
+                }
+            };
+            const addWalkIns = ids => {
+                setPickWalkIn(false);
+                const add = ids.map(id => members.find(m => m.id === id)).filter(Boolean);
+                update(s => ({ ...s, extra: [...s.extra, ...add], checkins: [...s.checkins, ...add.map(m => ({ id: m.id, at: Date.now(), left: false }))] }), true);
+            };
+            const addGuest = () => {
+                let k = 1;
+                while (everyone.some(p => p.id === 'guest:' + k)) k++;
+                const g = { id: 'guest:' + k, name: 'guest ' + k, skill: 0 };
+                update(s => ({ ...s, extra: [...s.extra, g], checkins: [...s.checkins, { id: g.id, at: Date.now(), left: false }] }), true);
+            };
+
+            // ---- เกม ----
+            // คอร์ดว่างหยิบเกมแรกในคิวที่ไม่มีใครกำลังเล่นอยู่ในคอร์ดอื่น
+            const readyFor = s => s.queue.findIndex(q => !gameIds(q).some(id => s.games.some(g => g.end === null && gameIds(g).includes(id))));
+            const startGame = c => update(s => {
+                const k = readyFor(s);
+                if (k === -1) return s;
+                const g = s.queue[k];
+                return { ...s, tick: s.tick + 1, games: [...s.games, { no: g.no, court: c, teams: g.teams, start: s.tick + 1, end: null, startedAt: Date.now() }], queue: s.queue.filter((_, j) => j !== k) };
+            });
+            const endGame = c => update(s => {
+                const t = s.tick + 1;
+                return { ...s, tick: t, games: s.games.map(g => g.court === c && g.end === null ? { ...g, end: t, endedAt: Date.now() } : g) };
+            });
+            // เริ่มผิดคู่: เอาคู่นี้กลับไปหัวคิว (เลขเดิม ล็อกไว้) ไม่นับเป็นเกมที่เล่น
+            const undoGame = c => {
+                const g = onCourt(c);
+                if (!g || !window.confirm(`ยกเลิกคู่ที่ ${g.no || ''} ที่คอร์ด ${c + 1}? (กลับไปรอในคิว ไม่นับเกม)`)) return;
+                update(s => ({ ...s, games: s.games.filter(x => x.start !== g.start), queue: [{ no: g.no, teams: g.teams, notes: [], locked: true }, ...s.queue] }));
+            };
+            const setCourts = n => {
+                if (n < st.courts && onCourt(n)) return showToast(`คอร์ด ${n + 1} ยังเล่นอยู่`, 'error');
+                update(s => ({ ...s, courts: n }), true);
+            };
+            const setAhead = n => update(s => ({ ...s, ahead: n, queue: s.queue.filter((g, j) => j < n || g.locked) }));
+            const toggleLock = k => update(s => ({ ...s, queue: s.queue.map((g, j) => j === k ? { ...g, locked: !g.locked } : g) }));
+            const redrawGame = k => update(s => ({ ...s, queue: s.queue.map((g, j) => j === k ? { no: g.no } : g) }));   // ช่องว่าง เลขเดิม ให้จัดใหม่
+            const reset = () => { if (window.confirm('ล้างเช็กอินและประวัติเกมทั้งหมดของรอบนี้?')) update(() => ({ ...LIVE_EMPTY, courts: st.courts, ahead: st.ahead })); };
+
+            // แตะชื่อสองชื่อเพื่อสลับ: ในคิว↔ในคิว = สลับตำแหน่ง (ข้ามเกมได้), ในคิว↔คนที่ยังไม่มีคิว = เปลี่ยนคนลง เกมที่ถูกแก้จะล็อกไว้
+            const isSel = x => sel && (x.id !== undefined ? sel.id === x.id : sel.q === x.q && sel.t === x.t && sel.i === x.i);
+            const tapSlot = target => {
+                if (!sel) return setSel(target);
+                if (isSel(target)) return setSel(null);
+                const a = sel, b = target;
+                if (a.id !== undefined && b.id !== undefined) return setSel(b);
+                update(s => {
+                    const queue = s.queue.map(g => ({ ...g, teams: g.teams.map(t => t.slice()) }));
+                    const slot = a.id === undefined ? a : b, other = a.id === undefined ? b : a;
+                    if (!queue[slot.q]) return s;
+                    const x = queue[slot.q].teams[slot.t][slot.i];
+                    if (other.id !== undefined) queue[slot.q].teams[slot.t][slot.i] = other.id;
+                    else {
+                        if (!queue[other.q]) return s;
+                        queue[slot.q].teams[slot.t][slot.i] = queue[other.q].teams[other.t][other.i];
+                        queue[other.q].teams[other.t][other.i] = x;
+                        queue[other.q].locked = true;
+                    }
+                    queue[slot.q].locked = true;
+                    return { ...s, queue };
+                });
+            };
+
+            // คนที่ยังไม่มีคิว (อยู่สนาม ไม่ได้เล่น ไม่อยู่ในคิว) เรียงตามสิทธิ์
+            const queued = new Set(st.queue.flatMap(gameIds));
+            const idle = here.filter(c => !playingNow.has(c.id) && !queued.has(c.id)).map(c => ({ ...(byId[c.id] || { id: c.id, name: c.id }), arrivedAt: c.at, order: c.order }));
+            const bench = pairQueue({ players: idle, games: st.games, now: st.tick, clock: Date.now() });
+            const ready = readyFor(st);
+
+            const team = t => t.map(nameOf).join(' + ');
+            const done = st.games.filter(g => g.end !== null);
+            const counts = st.checkins.map(c => c.id).filter(id => gamesOf(id) > 0);
+            const text = [
+                `🏸 จัดคู่ ${title}`,
+                ...Array.from({ length: st.courts }, (_, c) => onCourt(c)).map((g, c) => g && `ตอนนี้ คอร์ด ${c + 1}: คู่ที่ ${g.no} ${team(g.teams[0])} vs ${team(g.teams[1])}`).filter(Boolean),
+                st.queue.length ? '\nคิว' : '',
+                ...st.queue.map(g => `คู่ที่ ${g.no}: ${team(g.teams[0])} vs ${team(g.teams[1])}`),
+                bench.length ? `ยังไม่มีคิว: ${bench.map(q => nameOf(q.id)).join(', ')}` : '',
+                done.length ? '\nเล่นไปแล้ว' : '',
+                ...done.map(g => `คู่ที่ ${g.no}: ${team(g.teams[0])} vs ${team(g.teams[1])}`),
+                counts.length ? '\nจำนวนเกม: ' + counts.map(id => `${nameOf(id)} ${gamesOf(id)}`).join(', ') : ''
+            ].filter(Boolean).join('\n');
+            const copy = async () => {
+                if (await copyText(text)) { setCopied(true); setTimeout(() => setCopied(false), 2000); }
+                else showToast('คัดลอกไม่ได้', 'error');
+            };
+
+            const nameBtn = (id, target) => (
+                <button key={JSON.stringify(target)} onClick={() => tapSlot(target)}
+                    className={`inline-flex items-center gap-1 pl-0.5 pr-2.5 py-0.5 rounded-full text-[15px] font-medium ${isSel(target) ? 'bg-[#007AFF] text-white' : 'bg-gray-100 text-gray-800'}`}>
+                    <SkillDot skill={(byId[id] || {}).skill || 0} />{nameOf(id)}
+                </button>
+            );
+            const unrated = everyone.filter(p => here.some(c => c.id === p.id) && !p.skill).length;
+            const notHere = players.filter(p => !checkin(p.id));
+            const gone = st.checkins.filter(c => c.left);
+            const freeCourts = Array.from({ length: st.courts }, (_, c) => c).filter(c => !onCourt(c));
+
+            return (
+                <div className="mb-8">
+                    <SectionTitle right={(st.checkins.length > 0) && (
+                        <span className="flex items-center gap-4">
+                            <button onClick={copy} className={`text-[15px] font-medium ${copied ? 'text-[#34C759]' : 'text-[#007AFF] active:opacity-70'}`}>{copied ? 'คัดลอกแล้ว' : 'คัดลอก'}</button>
+                            <button onClick={() => onShare(text)} className="text-[15px] font-medium text-[#06C755] active:opacity-70">แชร์เข้า LINE</button>
+                        </span>
+                    )}>จัดคู่หน้างาน</SectionTitle>
+                    <div className={`text-[12px] px-4 -mt-1 mb-2 ${sync === 'offline' || sync === 'error' ? 'text-[#FF9500]' : 'text-gray-400'}`}>
+                        {sync === 'loading' ? 'กำลังโหลดจากชีท...'
+                            : sync === 'saving' ? 'กำลังบันทึก...'
+                            : sync === 'offline' ? 'ออฟไลน์: เก็บไว้ในเครื่องก่อน ต่อเน็ตได้จะส่งให้เอง'
+                            : sync === 'error' ? <button onClick={() => flush()} className="underline">บันทึกไม่สำเร็จ แตะเพื่อลองใหม่</button>
+                            : 'บันทึกแล้ว แอดมินคนอื่นเห็นตรงกัน (อัปเดตทุก 10 วินาที)'}
+                    </div>
+
+                    {/* เช็กอิน */}
+                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
+                        <div className="p-4 border-b border-gray-200">
+                            <div className="flex justify-between items-baseline mb-2">
+                                <span className="text-[13px] text-gray-500">แตะชื่อเมื่อมาถึงสนาม (มาก่อนได้ลงก่อน)</span>
+                                <span className="text-[13px] text-gray-500 tabular-nums">อยู่สนาม {here.length} คน</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {here.map((c, i) => (
+                                    <button key={c.id} onClick={() => tapPlayer(c.id)} className="pl-1 pr-3 py-1 inline-flex items-center gap-1.5 rounded-full text-[15px] font-medium bg-[#007AFF]/10 text-[#007AFF]">
+                                        <span className="w-5 h-5 rounded-full bg-[#007AFF] text-white text-[11px] font-bold flex items-center justify-center tabular-nums">{i + 1}</span>
+                                        {nameOf(c.id)}
+                                    </button>
+                                ))}
+                                {notHere.map(p => (
+                                    <button key={p.id} onClick={() => tapPlayer(p.id)} className="px-3 py-1 rounded-full text-[15px] font-medium border border-dashed border-gray-300 text-gray-400">{p.name}</button>
+                                ))}
+                                {gone.map(c => (
+                                    <button key={c.id} onClick={() => tapPlayer(c.id)} className="px-3 py-1 rounded-full text-[15px] font-medium bg-gray-50 text-gray-300 line-through">{nameOf(c.id)}</button>
+                                ))}
+                            </div>
+                            <div className="flex gap-4 mt-3">
+                                <button onClick={() => setPickWalkIn(true)} className="text-[15px] font-medium text-[#007AFF] active:opacity-70">+ walk-in</button>
+                                <button onClick={addGuest} className="text-[15px] font-medium text-[#FF9500] active:opacity-70">+ guest</button>
+                            </div>
+                            {unrated > 0 && <div className="text-[12px] text-gray-500 mt-2">? = ยังไม่ระบุระดับฝีมือ (คิดเป็น M) ตั้งได้ที่ จัดการข้อมูล &gt; สมาชิก</div>}
+                        </div>
+                        <Stepper label="จำนวนคอร์ด" value={st.courts} min={1} max={4} onChange={setCourts} />
+                        {allIn(st) && endAt ? (
+                            <div className="p-4 flex justify-between items-center gap-3">
+                                <div>
+                                    <div className="text-[17px] text-black">จัดคิวครบทั้งรอบ</div>
+                                    <div className="text-[13px] text-gray-500">ทุกคนที่ลงชื่อมาครบแล้ว</div>
+                                </div>
+                                <span className="text-[17px] text-gray-500 tabular-nums">{st.queue.length} คู่</span>
+                            </div>
+                        ) : (
+                            <Stepper label="จัดคิวล่วงหน้า (เกม)" value={st.ahead} min={1} max={6} onChange={setAhead} last />
+                        )}
+                    </div>
+
+                    {/* คอร์ด */}
+                    {Array.from({ length: st.courts }, (_, c) => {
+                        const g = onCourt(c);
+                        const first = !g && freeCourts[0] === c;   // เกมแรกในคิวแสดงที่คอร์ดว่างคอร์ดแรก
+                        return (
+                            <div key={c} className="bg-white rounded-[20px] shadow-sm overflow-hidden mt-3">
+                                <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 flex justify-between items-center">
+                                    <span className="text-[16px] font-semibold text-gray-700">คอร์ด {c + 1}</span>
+                                    {g ? <span className="text-[15px] font-semibold text-[#34C759]">กำลังเล่นคู่ที่ {g.no}</span> : <span className="text-[13px] text-gray-500">ว่าง</span>}
+                                </div>
+                                {g ? (
+                                    <div className="p-4">
+                                        <div className="text-[17px] text-black font-medium leading-snug">{team(g.teams[0])} <span className="text-gray-400 font-normal">vs</span> {team(g.teams[1])}</div>
+                                        <div className="flex gap-2 mt-3">
+                                            <button onClick={() => undoGame(c)} className="px-4 py-2.5 rounded-[12px] bg-gray-100 text-[15px] text-gray-500 active:opacity-70">ยกเลิก</button>
+                                            <button onClick={() => endGame(c)} className="flex-1 py-2.5 rounded-[12px] bg-[#34C759] text-white text-[16px] font-semibold active:opacity-80">จบเกม</button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="p-4">
+                                        {ready !== -1 && first && <div className="text-[15px] text-gray-500 mb-2">คู่ที่ {st.queue[ready].no}: {team(st.queue[ready].teams[0])} vs {team(st.queue[ready].teams[1])}</div>}
+                                        <button onClick={() => startGame(c)} disabled={ready === -1}
+                                            className="w-full py-2.5 rounded-[12px] bg-[#007AFF] text-white text-[16px] font-semibold active:opacity-80 disabled:bg-gray-100 disabled:text-gray-400 disabled:font-normal disabled:text-[15px]">
+                                            {ready === -1 ? (here.length < 4 ? `รอคนมาครบ 4 คน (ตอนนี้ ${here.length})` : 'รอคนว่างจากคอร์ดอื่น') : `เริ่มคู่ที่ ${st.queue[ready].no}`}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+
+                    {/* คิวคู่ถัดไป */}
+                    {(st.queue.length > 0 || bench.length > 0) && (
+                        <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mt-3">
+                            <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 text-[16px] font-semibold text-gray-700">คิวคู่ถัดไป</div>
+                            {st.queue.map((g, k) => (
+                                <div key={k} className="px-4 py-3 border-b border-gray-100">
+                                    <div className="flex items-start gap-2">
+                                        <span className="w-9 shrink-0 leading-tight text-center">
+                                            <span className="block text-[11px] text-gray-400">คู่ที่</span>
+                                            <span className="block text-[17px] font-bold text-black tabular-nums">{g.no}</span>
+                                        </span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex flex-wrap gap-1.5">{nameBtn(g.teams[0][0], { q: k, t: 0, i: 0 })}{nameBtn(g.teams[0][1], { q: k, t: 0, i: 1 })}</div>
+                                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                                <span className="text-gray-400 text-[13px] w-5">vs</span>
+                                                {nameBtn(g.teams[1][0], { q: k, t: 1, i: 0 })}{nameBtn(g.teams[1][1], { q: k, t: 1, i: 1 })}
+                                            </div>
+                                        </div>
+                                        <div className="shrink-0 flex items-center gap-1">
+                                            <button onClick={() => toggleLock(k)} aria-label={g.locked ? 'ปลดล็อก' : 'ล็อก'}
+                                                className={`w-8 h-8 rounded-full text-[14px] flex items-center justify-center ${g.locked ? 'bg-amber-100' : 'bg-gray-100 opacity-50'}`}>{g.locked ? '🔒' : '🔓'}</button>
+                                            <button onClick={() => redrawGame(k)} aria-label="สุ่มคู่นี้ใหม่" className="w-8 h-8 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center active:opacity-70"><IconRefresh size={14} /></button>
+                                        </div>
+                                    </div>
+                                    {g.notes.map((x, i) => <div key={i} className="text-[12px] text-amber-700 mt-1 ml-11">⚠️ {x}</div>)}
+                                </div>
+                            ))}
+                            {bench.length > 0 && (
+                                <div className="px-4 py-3 border-b border-gray-100">
+                                    <div className="text-[13px] text-gray-500 mb-1.5">ยังไม่มีคิว</div>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {bench.map(q => (
+                                            <span key={q.id} className="inline-flex items-center gap-1">
+                                                {nameBtn(q.id, { id: q.id })}
+                                                <span className="text-[11px] text-gray-400 tabular-nums">{q.games}</span>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            <div className="px-4 py-2.5 text-[12px] text-gray-500">
+                                แตะชื่อหนึ่งแล้วแตะอีกชื่อเพื่อสลับ (ข้ามเกมได้ หรือเปลี่ยนเป็นคนที่ยังไม่มีคิว) เกมที่แก้แล้วจะล็อก 🔒 ไม่ถูกจัดใหม่ตอนมีคนมา/กลับ กดล็อกเกมที่ประกาศไปแล้วได้
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ประวัติ */}
+                    {done.length > 0 && (
+                        <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mt-3">
+                            <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 flex justify-between items-center">
+                                <span className="text-[16px] font-semibold text-gray-700">เล่นไปแล้ว</span>
+                                <span className="text-[15px] text-gray-500 tabular-nums">{done.length} คู่</span>
+                            </div>
+                            {done.slice().reverse().map((g, i) => (
+                                <div key={g.start} className="px-4 py-2.5 border-b border-gray-100 last:border-0 flex gap-3 text-[15px]">
+                                    <span className="text-gray-500 tabular-nums w-14 shrink-0">คู่ที่ {g.no}</span>
+                                    <span className="flex-1 min-w-0 text-black">{team(g.teams[0])} <span className="text-gray-400">vs</span> {team(g.teams[1])}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {st.checkins.length > 0 && (
+                        <button onClick={reset} className="w-full mt-3 text-[14px] text-[#FF3B30] active:opacity-70">ล้างทั้งหมด เริ่มใหม่</button>
+                    )}
+
+                    {pickWalkIn && (
+                        <MultiPicker title="เพิ่ม walk-in"
+                            options={members.filter(m => !everyone.some(p => p.id === m.id)).map(m => ({ value: m.id, label: m.name }))}
+                            onClose={() => setPickWalkIn(false)} onConfirm={addWalkIns} />
+                    )}
+                </div>
             );
         }
 
@@ -1027,7 +1693,7 @@
                                         <button key={u.User_ID} onClick={() => editUser(u)} className="w-full text-left px-4 py-3 border-b border-gray-100 last:border-0 active:bg-gray-50 flex items-center gap-3">
                                             <span className="flex-1 min-w-0 truncate text-[16px] text-black">{guestLabel(u.DisplayName)}</span>
                                             {isGuestName(u.DisplayName) && <span className="shrink-0 text-[12px] font-semibold text-[#FF9500] bg-[#FF9500]/10 rounded-full px-2 py-0.5">Guest</span>}
-                                            {u.Skill_Level && <span className="text-[12px] text-gray-500">{u.Skill_Level}</span>}
+                                            {pairSkillOf(u.Skill_Level) > 0 && <SkillDot skill={pairSkillOf(u.Skill_Level)} />}
                                             <span className="text-[12px] text-gray-400 tabular-nums">{regCountOf(u.User_ID)} รอบ</span>
                                         </button>
                                     );
@@ -1217,7 +1883,19 @@
                                 </div>
                             ))}>
                             <AdminField label="ชื่อ"><input value={editor.data.name} onChange={e => setData({ name: e.target.value })} className={FIELD} /></AdminField>
-                            <AdminField label="ระดับฝีมือ"><input value={editor.data.skill} onChange={e => setData({ skill: e.target.value })} className={FIELD} /></AdminField>
+                            <AdminField label="ระดับฝีมือ (ใช้ตอนจัดคู่)">
+                                <div className="flex bg-[#E9E9EA] rounded-[10px] p-0.5">
+                                    {[['B', 'มือใหม่'], ['M', 'กลาง'], ['H', 'เก่ง'], ['', 'ไม่ระบุ']].map(([v, label]) => {
+                                        const on = v ? String(editor.data.skill).trim().toUpperCase() === v : !pairSkillOf(editor.data.skill);
+                                        return (
+                                            <button key={label} type="button" onClick={() => setData({ skill: v })}
+                                                className={`flex-1 py-1.5 text-[14px] rounded-[8px] ${on ? 'bg-white shadow-sm font-semibold text-black' : 'text-gray-500'}`}>
+                                                {v ? `${v} ${label}` : label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </AdminField>
                         </AdminSheet>
                     )}
 
@@ -1303,6 +1981,12 @@
 
             // ---------- API ----------
             // ID token ของ LINE มีอายุ ~1 ชม. ถ้าหมดอายุไม่รีโหลดกลางงานเอง ให้ผู้ใช้เลือกว่าจะเข้าสู่ระบบใหม่ตอนไหน
+            // token LINE ยังใช้ได้อีกเกิน 1 นาที (งานเบื้องหลัง เช่น ซิงก์กระดานจัดคู่ ใช้เช็กก่อนส่ง จะได้ไม่เด้งให้เข้าสู่ระบบใหม่เอง)
+            const tokenFresh = () => {
+                if (!liffReady || !liff.isLoggedIn()) return false;
+                const d = liff.getDecodedIDToken && liff.getDecodedIDToken();
+                return !(d && d.exp && d.exp - Math.floor(Date.now() / 1000) < 60);
+            };
             const askRelogin = (auto) => {
                 if (auto || window.confirm('เซสชัน LINE หมดอายุ ต้องเข้าสู่ระบบใหม่\n(สิ่งที่ยังไม่ได้บันทึกจะหาย) เข้าสู่ระบบตอนนี้เลยไหม?')) {
                     cacheClear('me');
@@ -1543,6 +2227,12 @@
                 return m;
             }, [users]);
             const getUserName = (id) => nameById[String(id)] || 'ไม่ทราบชื่อ';
+            const sessionAt = (si, hour) => { const d = new Date(si.date); d.setHours(hour, 0, 0, 0); return d.getTime(); };
+            // ผู้เล่นสำหรับจัดคู่: ชื่อที่แสดง + ระดับฝีมือ
+            const playerOf = (id) => {
+                const u = users.find(x => String(x.User_ID) === String(id)) || {};
+                return { id: String(id), name: guestLabel(getUserName(id)), skill: pairSkillOf(u.Skill_Level) };
+            };
             const getUserPicture = (id) => {
                 if (String(id) === myId && lineProfile && lineProfile.picture) return lineProfile.picture;
                 const u = users.find(x => String(x.User_ID) === String(id));
@@ -1724,8 +2414,8 @@
             };
 
             // แชร์ข้อความเข้ากลุ่ม LINE: ใช้ตัวเลือกกลุ่มของ LIFF ถ้ามี ไม่งั้นเปิดหน้าแชร์ของ LINE
-            const handleShareLineText = async () => {
-                const text = lineText.trim();
+            const shareToLine = async (raw) => {
+                const text = String(raw || '').trim();
                 if (!text) return;
                 try {
                     if (liffReady && liff.isApiAvailable('shareTargetPicker')) {
@@ -1739,6 +2429,7 @@
                 }
                 window.open('https://line.me/R/share?text=' + encodeURIComponent(text), '_blank');
             };
+            const handleShareLineText = () => shareToLine(lineText);
 
             // ---------- admin manager ----------
             const openAdminManager = () => {
@@ -2111,6 +2802,17 @@
                                     </div>
                                     <p className="text-[13px] text-gray-500 px-4 mt-2">แอดมินเพิ่มได้เกินโควตา ระบบไม่บล็อก</p>
                                 </div>
+                            )}
+
+                            {/* Admin: on-court pairing */}
+                            {isAdminUser && !si.isCancelled && (
+                                <LiveBoard key={s.Session_ID} sessionId={s.Session_ID} title={`${fmtShort(si.date)} ${s.Location || ''}`.trim()}
+                                    avoidText={appSettings.PAIRING_AVOID} onShare={shareToLine} showToast={showToast}
+                                    api={sendApiRequest} canSync={tokenFresh}
+                                    endAt={sessionAt(si, si.isWorkday ? 20 : 18)}
+                                    players={currentRegs.map(r => ({ ...playerOf(r.User_ID), leaveAt: si.isWorkday && inH1(r) && !inH2(r) ? sessionAt(si, 19) : undefined }))}
+                                    members={users.filter(u => u.User_ID).map(u => playerOf(u.User_ID))
+                                        .sort((a, b) => a.name.localeCompare(b.name, 'th'))} />
                             )}
 
                             {/* Cost */}

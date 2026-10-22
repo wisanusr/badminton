@@ -69,6 +69,19 @@ function routeRequest(action, payload, idToken, audit) {
     return { status: "success", data: getHistory(ss) };
   }
 
+  // กระดานจัดคู่หน้างานของแอดมิน (Live.gs): อ่านไม่ต้องถือ lock ส่วนบันทึกถือ lock แต่ไม่นับแถว/ไม่ล้าง cache ของ getAllData
+  // (กดกันหลายสิบครั้งต่อคืน และไม่กระทบข้อมูลที่ getAllData ส่ง) ทั้งสองไม่ลง AuditLog (ดู READ_ACTIONS)
+  if (action === "liveGet") {
+    requireAdmin(ss, line);
+    return liveGet(ss, payload);
+  }
+  if (action === "liveSave") {
+    requireAdmin(ss, line);
+    const liveLock = LockService.getScriptLock();
+    if (!liveLock.tryLock(15000)) fail("BUSY", "ระบบยุ่งมาก โปรดลองใหม่อีกครั้ง");
+    try { return liveSave(ss, line, payload); } finally { liveLock.releaseLock(); }
+  }
+
   // งานแจ้งเตือนรันหลังปลดล็อก คนอื่นจะได้ไม่ต้องรอ และถ้าส่งไม่สำเร็จก็ไม่กระทบการยกเลิก
   const ctx = { afterUnlock: null };
   const lock = LockService.getScriptLock();
