@@ -489,15 +489,6 @@ test('settings: card link must be https or empty, expiry a real date; admin sees
   assert.strictEqual(h('adminGetSettings', {}, 'tokAdmin').data.find(r => r.Key === 'POINT_CARD_EXPIRES').Value, '');
 });
 
-test('settings: PAIRING_AVOID (who must not share a court) is set up by default, editable, and public', ({ G, sheets }) => {
-  const h = G('handleRequest');
-  h('getAllData', {}, null); // first request runs initialSetup
-  assert.strictEqual(sheets.Settings.rows.filter(r => r[0] === 'PAIRING_AVOID').length, 1, 'initialSetup adds the key once');
-  h('adminSaveSetting', { key: 'PAIRING_AVOID', value: ' Alice / Bob ' }, 'tokAdmin');
-  expectCode(() => h('adminSaveSetting', { key: 'PAIRING_AVOID', value: 'x' }, 'tokA'), 'FORBIDDEN');
-  assert.strictEqual(h('getAllData', {}, null).data.settings.PAIRING_AVOID, 'Alice / Bob', 'the page reads it from getAllData');
-});
-
 const plain = x => JSON.parse(JSON.stringify(x));   // values from the vm have another realm's prototypes
 
 test('live board: admins only; save/get round-trips with a version; a save based on an old version gets the newer board back', ({ G, sheets }) => {

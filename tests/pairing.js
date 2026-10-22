@@ -13,8 +13,8 @@ const end = html.indexOf('// pairing:end');
 if (start === -1 || end === -1) throw new Error('pairing block not found in index.html');
 const ctx = {};
 vm.createContext(ctx);
-vm.runInContext(html.slice(start, end) + '\nthis.api = { proposeGame, planQueue, numberQueue, pairQueue, pairStreak, checkGame, parseAvoidRules, pairSkillOf, pairKey };', ctx);
-const { proposeGame, planQueue, numberQueue, pairQueue, pairStreak, checkGame, parseAvoidRules, pairSkillOf, pairKey } = ctx.api;
+vm.runInContext(html.slice(start, end) + '\nthis.api = { proposeGame, planQueue, numberQueue, pairQueue, pairStreak, checkGame, pairTemplate, pairScheduleText, PAIR_TEMPLATES, pairSkillOf, pairKey };', ctx);
+const { proposeGame, planQueue, numberQueue, pairQueue, pairStreak, checkGame, pairTemplate, pairScheduleText, PAIR_TEMPLATES, pairSkillOf, pairKey } = ctx.api;
 const plain = x => JSON.parse(JSON.stringify(x));
 
 // mulberry32: small seeded PRNG
@@ -33,7 +33,7 @@ const MIN = 60000;
 // ahead = 0: propose one game whenever a court is free; ahead > 0: keep a queue of that many games planned in advance
 // (re-planned when someone arrives or leaves, topped up otherwise) and free courts take the first game they can
 // returns games: [{ court, teams, start, end, at (minute), notes, pool (who was free) }]
-function simulate({ people, courts = 1, minutes = 120, avoid = [], seed = 1, gameLen = () => 10, ahead = 0 }) {
+function simulate({ people, courts = 1, minutes = 120, seed = 1, gameLen = () => 10, ahead = 0 }) {
   const rnd = seeded(seed);
   const ps = people.map(p => (typeof p === 'string' ? { name: p, arrive: 0 } : p))
     .map((p, i) => ({ id: 'P' + i, name: p.name, skill: pairSkillOf(SKILLS[p.name]), arrive: p.arrive, leave: p.leave === undefined ? Infinity : p.leave }));
@@ -54,14 +54,14 @@ function simulate({ people, courts = 1, minutes = 120, avoid = [], seed = 1, gam
       const free = here.filter(p => !busy.has(p.id));
       let g;
       if (ahead) {
-        queue = planQueue({ players: here, games, queue, ahead, courts, now: tick, clock: t * MIN, avoid, allPlayers: ps, replan, random: rnd });
+        queue = planQueue({ players: here, games, queue, ahead, courts, now: tick, clock: t * MIN, allPlayers: ps, replan, random: rnd });
         replan = false;
         const k = queue.findIndex(q => !q.teams.flat().some(id => busy.has(id)));
         if (k === -1) continue;
         g = queue[k];
         queue = queue.filter((_, j) => j !== k);
       } else {
-        g = proposeGame({ players: free, games, now: tick, clock: t * MIN, avoid, allPlayers: ps, random: rnd });
+        g = proposeGame({ players: free, games, now: tick, clock: t * MIN, allPlayers: ps, random: rnd });
       }
       if (!g) continue;
       const game = { court: i, teams: plain(g.teams), notes: plain(g.notes), pool: free.map(p => p.id), start: ++tick, end: null, at: t };
@@ -80,11 +80,6 @@ const test = (name, fn) => tests.push({ name, fn });
 // scenario tests run twice: one game at a time, and with a queue of games planned ahead
 const MODES = [['', 0], [' [queue 3 ahead]', 3]];
 const both = (name, fn) => MODES.forEach(([label, ahead]) => test(name + label, () => fn(ahead)));
-
-test('parseAvoidRules reads "a, b / c; d / e" and skips broken parts', () => {
-  assert.deepStrictEqual(plain(parseAvoidRules('แทน, หวาน / ต้อม; A/B; broken; /x')), [[['แทน', 'หวาน'], ['ต้อม']], [['A'], ['B']]]);
-  assert.deepStrictEqual(plain(parseAvoidRules('')), []);
-});
 
 test('pairSkillOf maps B/M/H, anything else is unset (0)', () => {
   assert.deepStrictEqual(['b', 'M', ' H ', 'C', ''].map(pairSkillOf), [1, 2, 3, 0, 0]);
@@ -175,24 +170,6 @@ both('2 courts finishing at different times: no one on two courts at once, every
     const n = Object.values(countGames(games));
     assert.strictEqual(n.length, 12);
     assert(Math.max(...n) - Math.min(...n) <= 2, `seed ${seed}: uneven ${n}`);
-  }
-});
-
-both('avoid rule: แทน/หวาน never share a court with ต้อม unless only those 4 were free (then the game carries a note)', ahead => {
-  const avoid = parseAvoidRules('แทน, หวาน / ต้อม');
-  for (let seed = 1; seed <= 30; seed++) {
-    for (const courts of [1, 2]) {
-      const people = ['นิวส์', 'แทน', 'แอม', 'กั๊ก', 'ครีม', 'หวาน', 'ต้อม', 'เหมียว', 'GP', 'พลอย']
-        .map((name, i) => ({ name, arrive: name === 'พลอย' ? 60 : i * 2, leave: name === 'GP' ? 60 : undefined }));
-      const { games, id } = simulate({ people, courts, avoid, seed, ahead });
-      games.forEach(g => {
-        if (!sameCourt(g, id('แทน'), id('ต้อม')) && !sameCourt(g, id('หวาน'), id('ต้อม'))) return;
-        const withoutTom = g.pool.filter(x => x !== id('ต้อม')).length;
-        const withoutPair = g.pool.filter(x => x !== id('แทน') && x !== id('หวาน')).length;
-        assert(withoutTom < 4 && withoutPair < 4, `seed ${seed} courts ${courts} min ${g.at}: rule broken though avoidable`);
-        assert(g.notes.some(n => n.includes('ต้อม')), 'the game says why');
-      });
-    }
   }
 });
 
@@ -305,6 +282,102 @@ test('full queue, 2 courts: 12 per hour, games next to each other in the queue n
   }
 });
 
+// ---------- rules from the court-manager skill: quota, 6 / 8 player templates, schedule text ----------
+const streakOk = (games, ids_) => {
+  const run = {};
+  return games.every(g => ids_.every(id => { run[id] = ids(g).includes(id) ? (run[id] || 0) + 1 : 0; return run[id] <= 2; }));
+};
+const partnerCounts = games => { const n = {}; games.forEach(g => g.teams.forEach(([a, b]) => { const k = pairKey(a, b); n[k] = (n[k] || 0) + 1; })); return n; };
+
+test('templates: 6 players play 8 rest 4 in rest pairs, 8 players play 6 rest 6 with no repeated partners, max 2 in a row', () => {
+  [6, 8].forEach(n => {
+    const games = PAIR_TEMPLATES[n].games.map(teams => ({ teams }));
+    assert.strictEqual(games.length, 12);
+    const count = countGames(games);
+    Object.values(count).forEach(c => assert.strictEqual(c, n === 6 ? 8 : 6, `${n} players: ${JSON.stringify(count)}`));
+    assert(streakOk(games, [...Array(n).keys()]), `${n} players: 3 in a row`);
+    assert.deepStrictEqual(plain(ids(games[0]).sort()), [0, 1, 2, 3], 'game 1 = first four to arrive');
+  });
+  // 6: the pair resting together rotates 4-5, 0-1, 2-3
+  PAIR_TEMPLATES[6].games.forEach((t, g) => {
+    const rest = [0, 1, 2, 3, 4, 5].filter(i => !t.flat().includes(i));
+    assert.deepStrictEqual(plain(rest), [[4, 5], [0, 1], [2, 3]][g % 3]);
+  });
+  // 8: games 1-6 the two blocks take turns, games 7-12 partners are always across blocks and never repeat
+  const e = PAIR_TEMPLATES[8].games;
+  e.slice(0, 6).forEach((t, g) => t.flat().forEach(i => assert.strictEqual(i < 4, g % 2 === 0)));
+  e.slice(6).forEach(t => t.forEach(([a, b]) => assert((a < 4) !== (b < 4), 'second half partners cross blocks')));
+  assert(Object.values(partnerCounts(e.map(teams => ({ teams })))).every(c => c === 1), '8 players: a partner pair repeats');
+});
+
+test('planQueue uses the template for 6 / 8 checked in with the whole evening known, skill-balanced', () => {
+  for (let seed = 1; seed <= 10; seed++) {
+    const players = queueWorld(['นิวส์', 'แทน', 'แอม', 'กั๊ก', 'ครีม', 'หวาน', 'ต้อม', 'เหมียว']);   // H M M M M M H B
+    const q = planQueue({ players, games: [], now: 0, clock: 0, ahead: 12, perHour: 6, total: 12, random: seeded(seed) });
+    assert.strictEqual(q.length, 12);
+    assert(Object.values(partnerCounts(q)).every(c => c === 1), `seed ${seed}: partner repeats`);
+    assert.deepStrictEqual(plain(ids(q[0]).sort()), ['P0', 'P1', 'P2', 'P3'], 'first come first play');
+    // skill balance: the chosen seating beats putting people in arrival order (blocks are fixed by arrival, places inside are free)
+    const skill = id => players.find(p => p.id === id).skill || 2;
+    const gaps = games => games.reduce((n, g) => n + Math.abs(skill(g.teams[0][0]) + skill(g.teams[0][1]) - skill(g.teams[1][0]) - skill(g.teams[1][1])), 0);
+    const asArrived = PAIR_TEMPLATES[8].games.map(t => ({ teams: t.map(team => team.map(i => players[i].id)) }));
+    assert(gaps(q) < gaps(asArrived), `seed ${seed}: ${gaps(q)} vs ${gaps(asArrived)} in arrival order`);
+    const six = planQueue({ players: players.slice(0, 6), games: [], now: 0, clock: 0, ahead: 12, perHour: 6, total: 12, random: seeded(seed) });
+    Object.values(countGames(six)).forEach(c => assert.strictEqual(c, 8));
+  }
+});
+
+test('quota: 7 and 5 players share 48 places evenly, and the extra games go to the people in game 1', () => {
+  [7, 5].forEach(n => {
+    for (let seed = 1; seed <= 15; seed++) {
+      const players = queueWorld(EIGHT.slice(0, n));
+      const q = planQueue({ players, games: [], now: 0, clock: 0, ahead: 12, perHour: 6, total: 12, random: seeded(seed) });
+      assert.strictEqual(q.length, 12);
+      const c = countGames(q);
+      const base = Math.floor(48 / n), extra = 48 % n;
+      const more = Object.keys(c).filter(id => c[id] === base + 1);
+      assert.strictEqual(more.length, extra, `${n} players seed ${seed}: ${JSON.stringify(c)}`);
+      assert(Object.values(c).every(v => v === base || v === base + 1), `${n} players seed ${seed}: ${JSON.stringify(c)}`);
+      const first = ids(q[0]);
+      if (extra <= 4) more.forEach(id => assert(first.includes(id), `${n} players: ${id} got the extra game but was not in game 1`));
+      else first.forEach(id => assert(more.includes(id), `${n} players: ${id} was in game 1 but did not get the extra game`));
+      if (n === 7) assert(streakOk(q, players.map(p => p.id)), `7 players seed ${seed}: 3 in a row`);
+    }
+  });
+});
+
+test('quota carries on from games already played (rule 4): the rest of the evening evens out', () => {
+  for (let seed = 1; seed <= 10; seed++) {
+    const players = queueWorld();
+    // 3 games were played by hand, unevenly (P0 played all three)
+    const played = [[['P0', 'P1'], ['P2', 'P3']], [['P0', 'P4'], ['P5', 'P6']], [['P0', 'P2'], ['P7', 'P5']]]
+      .map((teams, i) => ({ no: i + 1, teams, start: 2 * i + 1, end: 2 * i + 2 }));
+    const q = planQueue({ players, games: played, now: 6, clock: 0, ahead: 9, perHour: 6, slotBase: 3, total: 12, random: seeded(seed) });
+    assert.strictEqual(q.length, 9);
+    const c = countGames(played.concat(q));
+    assert(Object.values(c).every(v => v === 6), `seed ${seed}: ${JSON.stringify(c)}`);
+  }
+});
+
+test('pairScheduleText: LINE text with games, who rests, played games marked, and the stats', () => {
+  const names = { a: 'A', b: 'B', c: 'C', d: 'D', e: 'E', f: 'F' };
+  const all = Object.keys(names);
+  const rows = PAIR_TEMPLATES[6].games.map((t, i) => ({
+    no: i + 1, teams: t.map(team => team.map(k => all[k])), present: all, status: i < 2 ? 'done' : i === 2 ? 'live' : 'queued'
+  }));
+  const text = pairScheduleText({ title: 'พฤ. 22 ต.ค.', rows, nameOf: id => names[id], courts: 1, perHour: 6 });
+  const lines = text.split('\n');
+  assert.strictEqual(lines[0], '🏸 ตารางตีแบดวันนี้ 🏸');
+  assert(lines.includes('(เกม 1-2 เล่นไปแล้ว เป็นข้อมูลเดิม)'), 'only finished games count as played');
+  assert(lines.includes('เกม 1: A C VS B D  (พัก: E, F)'), text);
+  assert(lines.some(l => l.startsWith('เกม 3: ') && l.endsWith('← กำลังเล่น')));
+  assert(lines.includes('— ชั่วโมงที่ 2 —'));
+  assert(lines.includes('- โควตา: A B C D E F เล่น 8 พัก 4'), text);
+  assert(lines.includes('- สภาพร่างกาย: ไม่มีใครเล่นเกิน 2 เกมติด ✅'));
+  assert(lines.some(l => l.startsWith('- การจับคู่: คู่หูซ้ำ')), 'the 6-player rematch round repeats partners');
+  assert(!text.includes('|'), 'no markdown table');
+});
+
 test('teams are skill-balanced: H M M B becomes H+B vs M+M', () => {
   for (let seed = 1; seed <= 30; seed++) {
     const { games, ps } = simulate({ people: ['นิวส์', 'แทน', 'แอม', 'เหมียว'], minutes: 1, seed });
@@ -334,12 +407,6 @@ test('pairQueue: rested and fewer games first; at zero games, arrival order', ()
   const ps = ['a', 'b', 'c', 'd', 'e', 'f'].map((n, i) => ({ id: n, name: n, arrivedAt: 0, order: i }));
   const games = [{ teams: [['a', 'b'], ['c', 'd']], start: 1, end: 2 }];
   assert.deepStrictEqual(plain(pairQueue({ players: ps, games, now: 2, clock: 10 * MIN }).map(r => r.id)), ['e', 'f', 'a', 'b', 'c', 'd']);
-});
-
-test('checkGame flags a hand-made game that breaks the rules', () => {
-  const all = ['แทน', 'ต้อม', 'a', 'b'].map((n, i) => ({ id: 'P' + i, name: n }));
-  const notes = checkGame({ teams: [['P0', 'P2'], ['P1', 'P3']], games: [], avoid: parseAvoidRules('แทน / ต้อม'), allPlayers: all });
-  assert(notes.some(n => n.includes('แทน') && n.includes('ต้อม')));
 });
 
 let failed = 0;
