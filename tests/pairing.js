@@ -131,6 +131,22 @@ both('8 players, 1 court, 2 hours: nobody plays 3 in a row, games even (±1), no
   }
 });
 
+both('8 players, 1 court, 2 hours: groups mix (no two fixed groups of 4 taking turns all evening)', ahead => {
+  for (let seed = 1; seed <= 30; seed++) {
+    const { games, ps } = simulate({ people: EIGHT, seed, ahead });
+    ps.forEach(p => {
+      const met = new Set(), partners = new Set();
+      games.filter(g => ids(g).includes(p.id)).forEach(g => {
+        ids(g).forEach(x => { if (x !== p.id) met.add(x); });
+        g.teams.forEach(t => { if (t.includes(p.id)) t.forEach(x => { if (x !== p.id) partners.add(x); }); });
+      });
+      assert(met.size >= 6, `seed ${seed}: ${p.name} only shared games with ${met.size} of 7`);
+      // skill balance pairs the one B player with an H player most of the time, so partners vary less than opponents
+      assert(partners.size >= 3, `seed ${seed}: ${p.name} only partnered ${partners.size} people`);
+    });
+  }
+});
+
 both('late arrival plays the next game, but does not then play non-stop to catch up', ahead => {
   for (let seed = 1; seed <= 30; seed++) {
     const people = EIGHT.slice(0, 7).map(name => ({ name, arrive: 0 })).concat([{ name: 'เหมียว', arrive: 45 }]);
@@ -304,6 +320,14 @@ test('pairStreak: back-to-back games count, a game started without you is a rest
   assert.strictEqual(pairStreak('a', games, 6), 0, 'game 3 started without a');
   assert.strictEqual(pairStreak('e', games, 6), 2);
   assert.strictEqual(pairStreak('z', games, 6), 0);
+});
+
+test('pairQueue: people with no games always come before people who played, even when rounding puts them in the same tier', () => {
+  // checked in long before: 1 game over many slots rounds to the same tier as 0 games
+  const ps = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((n, i) => ({ id: n, name: n, arrivedAt: 0, order: i }));
+  const games = [{ teams: [['a', 'b'], ['c', 'd']], start: 1, end: 2 }];
+  const q = pairQueue({ players: ps, games, now: 2, clock: 400 * MIN });
+  assert.deepStrictEqual(plain(q.slice(0, 4).map(r => r.id)), ['e', 'f', 'g', 'h']);
 });
 
 test('pairQueue: rested and fewer games first; at zero games, arrival order', () => {
