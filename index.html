@@ -1053,8 +1053,9 @@
         // กระดานใช้ร่วมกันระหว่างแอดมินผ่านชีท Live (backend/Live.gs): กดแล้วหน้าจอเปลี่ยนทันที แล้วค่อยบันทึกเบื้องหลัง
         // ถ้าแอดมินอีกคนบันทึกไปก่อน (เวอร์ชันไม่ตรง) server ส่งกระดานล่าสุดมา หน้าเว็บทำสิ่งที่กดค้างไว้ซ้ำบนกระดานนั้นแล้วบันทึกใหม่
         // เครื่องอื่นดึงกระดานใหม่ทุก LIVE_POLL_MS ขณะเปิดหน้า และทันทีที่กลับมาที่แอป สำเนาในเครื่อง (localStorage) ใช้ตอนเน็ตหลุด
-        // skills = ฝีมือ guest เฉพาะรอบนี้ { id: 1|2|3 } (guest แต่ละรอบเป็นใครก็ไม่รู้ จึงไม่ใช้ Skill_Level ในชีท Users)
-        const LIVE_EMPTY = { courts: 1, ahead: 2, tick: 0, checkins: [], extra: [], games: [], queue: [], skills: {} };
+        // skills / nicknames = ฝีมือและชื่อเล่นของ guest เฉพาะรอบนี้ { id: 1|2|3 } / { id: "ต้น" }
+        // (guest แต่ละรอบเป็นใครก็ไม่รู้ จึงไม่ใช้ Skill_Level/DisplayName ในชีท Users)
+        const LIVE_EMPTY = { courts: 1, ahead: 2, tick: 0, checkins: [], extra: [], games: [], queue: [], skills: {}, nicknames: {} };
         const LIVE_POLL_MS = 10000;
         const liveBoardOf = state => ({ ...LIVE_EMPTY, ...(state || {}) });
         function LiveBoard({ sessionId, title, players, members, hours = 2, avoidText, api, canSync, onShare, showToast }) {
@@ -1063,6 +1064,8 @@
             const [st, setSt] = useState(() => liveBoardOf(saved.board));
             const [sel, setSel] = useState(null);           // ชื่อที่แตะไว้รอสลับ: { q, t, i } ในคิว หรือ { id } คนที่ยังไม่มีคิว
             const [pickWalkIn, setPickWalkIn] = useState(false);
+            const [ask, setAsk] = useState(null);           // แผ่นถาม guest: { id, mode: 'checkin' | 'new' | 'edit', guest? }
+            const [nick, setNick] = useState('');
             const [copied, setCopied] = useState(false);
             const [sync, setSync] = useState('loading');    // loading | ok | saving | offline | error
 
@@ -1139,8 +1142,12 @@
             }, [sessionId]);
 
             const avoid = parseAvoidRules(avoidText);
-            const everyoneOf = s => players.concat(s.extra.filter(x => !players.some(p => p.id === x.id)))
-                .map(p => (p.guest && s.skills && s.skills[p.id] ? { ...p, skill: s.skills[p.id] } : p));
+            // guest: ใช้ฝีมือ/ชื่อเล่นของรอบนี้ (label = ชื่อเดิม เช่น "guest 2")
+            const everyoneOf = s => players.concat(s.extra.filter(x => !players.some(p => p.id === x.id))).map(p => {
+                if (!p.guest) return p;
+                const skill = (s.skills || {})[p.id], nick = (s.nicknames || {})[p.id];
+                return { ...p, label: p.name, name: nick || p.name, skill: skill || p.skill };
+            });
             const everyone = everyoneOf(st);
             const byId = {};
             everyone.forEach(p => { byId[p.id] = p; });
@@ -1177,8 +1184,11 @@
             const gamesOf = id => st.games.filter(g => gameIds(g).includes(id)).length;
 
             // ---- เช็กอิน ----
+            const openAsk = (id, mode, guest) => { setNick((st.nicknames || {})[id] || ''); setAsk({ id, mode, guest }); };
             const tapPlayer = id => {
                 const c = checkin(id);
+                // guest ที่ยังไม่ได้ตั้งฝีมือรอบนี้: ถามชื่อเล่น/ฝีมือก่อนเช็กอิน
+                if (!c && (byId[id] || {}).guest && !(st.skills || {})[id]) return openAsk(id, 'checkin');
                 if (!c) return update(s => ({ ...s, checkins: [...s.checkins, { id, at: Date.now(), left: false }] }), true);
                 if (c.left) {
                     if (window.confirm(`${nameOf(id)} กลับมาเล่นต่อ?`)) update(s => ({ ...s, checkins: s.checkins.map(x => x.id === id ? { ...x, left: false, at: Date.now() } : x) }), true);
@@ -1211,9 +1221,23 @@
             const addGuest = () => {
                 let k = 1;
                 // เลขที่ยังว่างทั้ง id และชื่อ (guest ที่ลงชื่อในรอบชื่อ guest 1, guest 2 ... อยู่แล้ว)
-                while (everyone.some(p => p.id === 'guest:' + k || String(p.name).toLowerCase() === 'guest ' + k)) k++;
+                while (everyone.some(p => p.id === 'guest:' + k || String(p.label || p.name).toLowerCase() === 'guest ' + k)) k++;
                 const g = { id: 'guest:' + k, name: 'guest ' + k, skill: 0, guest: true };
-                update(s => ({ ...s, extra: [...s.extra, g], checkins: [...s.checkins, { id: g.id, at: Date.now(), left: false }] }), true);
+                openAsk(g.id, 'new', g);
+            };
+            // ตอบแผ่นถาม guest: skill = 1|2|3 หรือ 0 (ข้าม = ไม่ระบุ / แก้แค่ชื่อ) เช็กอินให้ด้วยถ้ายังไม่ได้เช็กอิน
+            const answerAsk = skill => {
+                const { id, mode, guest } = ask;
+                const name = nick.trim().slice(0, 20);
+                setAsk(null);
+                update(s => {
+                    const skills = { ...(s.skills || {}) }, nicknames = { ...(s.nicknames || {}) };
+                    if (skill) skills[id] = skill;
+                    if (name) nicknames[id] = name; else delete nicknames[id];
+                    const extra = mode === 'new' ? [...s.extra, guest] : s.extra;
+                    const checkins = mode !== 'edit' && !s.checkins.some(c => c.id === id) ? [...s.checkins, { id, at: Date.now(), left: false }] : s.checkins;
+                    return { ...s, skills, nicknames, extra, checkins };
+                }, true);
             };
 
             // ---- เกม ----
@@ -1339,7 +1363,7 @@
                                     </button>
                                 ))}
                                 {notHere.map(p => (
-                                    <button key={p.id} onClick={() => tapPlayer(p.id)} className="px-3 py-1 rounded-full text-[15px] font-medium border border-dashed border-gray-300 text-gray-400">{p.name}</button>
+                                    <button key={p.id} onClick={() => tapPlayer(p.id)} className="px-3 py-1 rounded-full text-[15px] font-medium border border-dashed border-gray-300 text-gray-400">{nameOf(p.id)}</button>
                                 ))}
                                 {gone.map(c => (
                                     <button key={c.id} onClick={() => tapPlayer(c.id)} className="px-3 py-1 rounded-full text-[15px] font-medium bg-gray-50 text-gray-300 line-through">{nameOf(c.id)}</button>
@@ -1352,12 +1376,14 @@
                             </div>
                             {guests.length > 0 && (
                                 <div className="mt-3 pt-3 border-t border-gray-100">
-                                    <div className="text-[13px] text-gray-500 mb-1.5">ฝีมือ guest รอบนี้</div>
+                                    <div className="text-[13px] text-gray-500 mb-1.5">guest รอบนี้ (แตะชื่อเพื่อใส่ชื่อเล่น)</div>
                                     {guests.map(p => {
                                         const cur = (st.skills || {})[p.id] || 0;
                                         return (
                                             <div key={p.id} className="flex items-center justify-between gap-3 py-1">
-                                                <span className={`text-[15px] ${checkin(p.id) ? 'text-black' : 'text-gray-400'}`}>{p.name}</span>
+                                                <button onClick={() => openAsk(p.id, 'edit')} className={`min-w-0 truncate text-left text-[15px] ${checkin(p.id) ? 'text-black' : 'text-gray-400'}`}>
+                                                    {p.name}{p.name !== p.label && <span className="text-[12px] text-gray-400"> ({p.label})</span>}
+                                                </button>
                                                 <div className="flex bg-[#E9E9EA] rounded-[8px] p-0.5">
                                                     {[1, 2, 3].map(v => (
                                                         <button key={v} onClick={() => setGuestSkill(p.id, v)} aria-label={`${p.name} ฝีมือ ${SKILL_LETTER[v]}`}
@@ -1367,7 +1393,7 @@
                                             </div>
                                         );
                                     })}
-                                    <div className="text-[12px] text-gray-500 mt-1">B มือใหม่ · M กลาง · H เก่ง ไม่เลือก = คิดเป็น M ใช้เฉพาะรอบนี้</div>
+                                    <div className="text-[12px] text-gray-500 mt-1">B มือใหม่ · M กลาง · H เก่ง ไม่เลือก = คิดเป็น M ชื่อเล่นและฝีมือใช้เฉพาะรอบนี้</div>
                                 </div>
                             )}
                             {unrated > 0 && <div className="text-[12px] text-gray-500 mt-2">? = ยังไม่ระบุระดับฝีมือ (คิดเป็น M) ตั้งได้ที่ จัดการข้อมูล &gt; สมาชิก</div>}
@@ -1485,6 +1511,31 @@
                     )}
                     {st.checkins.length > 0 && (
                         <button onClick={reset} className="w-full mt-3 text-[14px] text-[#FF3B30] active:opacity-70">ล้างทั้งหมด เริ่มใหม่</button>
+                    )}
+
+                    {ask && (
+                        <div className="fixed inset-0 z-[150] flex items-end justify-center bg-black/30" onClick={() => setAsk(null)}>
+                            <div className="w-full max-w-md bg-[#F2F2F7] rounded-t-[20px] p-4 pb-8 sheet-in" onClick={e => e.stopPropagation()}>
+                                <div className="flex justify-between items-center mb-3">
+                                    <span className="text-[17px] font-semibold text-black">{ask.mode === 'edit' ? 'แก้' : 'เช็กอิน'} {ask.guest ? ask.guest.name : (byId[ask.id] || {}).label || nameOf(ask.id)}</span>
+                                    <button onClick={() => setAsk(null)} className="text-[17px] text-[#007AFF]">ยกเลิก</button>
+                                </div>
+                                <input value={nick} onChange={e => setNick(e.target.value)} maxLength={20} placeholder="ชื่อเล่น (ไม่ใส่ก็ได้)" className={`${FIELD} bg-white mb-3`} />
+                                <div className="text-[13px] text-gray-500 mb-2">ฝีมือประมาณไหน</div>
+                                <div className="grid grid-cols-3 gap-2 mb-2">
+                                    {[[1, 'มือใหม่'], [2, 'กลาง'], [3, 'เก่ง']].map(([v, label]) => (
+                                        <button key={v} onClick={() => answerAsk(v)}
+                                            className={`py-3 rounded-[14px] shadow-sm active:opacity-70 ${(st.skills || {})[ask.id] === v ? 'bg-[#007AFF] text-white' : 'bg-white text-black'}`}>
+                                            <div className="text-[20px] font-bold">{SKILL_LETTER[v]}</div>
+                                            <div className="text-[13px] opacity-70">{label}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                                <button onClick={() => answerAsk(0)} className="w-full py-3 text-[15px] text-[#007AFF] active:opacity-70">
+                                    {ask.mode === 'edit' ? 'บันทึกชื่อ (ฝีมือเท่าเดิม)' : 'ข้าม (คิดเป็น M)'}
+                                </button>
+                            </div>
+                        </div>
                     )}
 
                     {pickWalkIn && (
