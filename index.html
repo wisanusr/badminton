@@ -1355,6 +1355,19 @@
                 if (!g || !window.confirm(`ยกเลิกคู่ที่ ${g.no || ''} ที่คอร์ด ${c + 1}? (กลับไปรอในคิว ไม่นับเกม)`)) return;
                 update(s => ({ ...s, games: s.games.filter(x => x.start !== g.start), queue: [{ no: g.no, teams: g.teams, notes: [], locked: true }, ...s.queue] }));
             };
+            // คอร์ดเดียว: ไม่ต้องกดเริ่ม/จบ แตะ "เล่นแล้ว" ที่คู่แรกในคิวทีเดียว (ระบบต้องรู้ว่าถึงคู่ไหน ตอนมีคนมา/กลับจะได้ไม่จัดคู่ที่เล่นไปแล้วใหม่)
+            const markPlayed = () => update(s => {
+                const g = s.queue[0];
+                if (!g) return s;
+                const at = Date.now();
+                return { ...s, tick: s.tick + 2, queue: s.queue.slice(1),
+                    games: [...s.games, { no: g.no, court: 0, teams: g.teams, present: s.checkins.filter(x => !x.left).map(x => x.id), start: s.tick + 1, end: s.tick + 2, startedAt: at, endedAt: at }] };
+            });
+            // ย้อนคู่ล่าสุดที่เล่นไปแล้ว (กดผิด): กลับไปหัวคิวด้วยเลขเดิม ล็อกไว้
+            const undoPlayed = g => {
+                if (!window.confirm(`ย้อนคู่ที่ ${g.no} กลับไปรอในคิว? (ไม่นับเป็นเกมที่เล่น)`)) return;
+                update(s => ({ ...s, games: s.games.filter(x => x.start !== g.start), queue: [{ no: g.no, teams: g.teams, notes: [], locked: true }, ...s.queue] }));
+            };
             const setCourts = n => {
                 if (n < st.courts && onCourt(n)) return showToast(`คอร์ด ${n + 1} ยังเล่นอยู่`, 'error');
                 update(s => ({ ...s, courts: n }), true);
@@ -1420,6 +1433,7 @@
             const notHere = players.filter(p => !checkin(p.id));
             const gone = st.checkins.filter(c => c.left);
             const freeCourts = Array.from({ length: st.courts }, (_, c) => c).filter(c => !onCourt(c));
+            const oneCourt = st.courts === 1 && !live.length;   // คอร์ดเดียว (และไม่มีเกมค้างจากโหมดเริ่ม/จบ) ใช้ "เล่นแล้ว" แทนกล่องคอร์ด
 
             return (
                 <div className="mb-8">
@@ -1442,7 +1456,7 @@
                         <div className="p-4 border-b border-gray-200">
                             <div className="flex justify-between items-baseline mb-2">
                                 <span className="text-[13px] text-gray-500">แตะชื่อเมื่อมาถึงสนาม (มาก่อนได้ลงก่อน)</span>
-                                <span className="text-[13px] text-gray-500 tabular-nums">Check in แล้ว {here.length} คน</span>
+                                <span className="text-[13px] text-gray-500 tabular-nums whitespace-nowrap">Check in แล้ว {here.length} คน</span>
                             </div>
                             <div className="flex flex-wrap gap-2">
                                 {here.map((c, i) => (
@@ -1480,8 +1494,8 @@
                         )}
                     </div>
 
-                    {/* คอร์ด */}
-                    {Array.from({ length: st.courts }, (_, c) => {
+                    {/* คอร์ด (หลายคอร์ดเท่านั้น คอร์ดเดียวจดตามเลขคู่ในคิวได้เลย) */}
+                    {!oneCourt && Array.from({ length: st.courts }, (_, c) => {
                         const g = onCourt(c);
                         const first = !g && freeCourts[0] === c;   // เกมแรกในคิวแสดงที่คอร์ดว่างคอร์ดแรก
                         return (
@@ -1537,6 +1551,9 @@
                                         </div>
                                     </div>
                                     {g.notes.map((x, i) => <div key={i} className="text-[12px] text-amber-700 mt-1 ml-11">⚠️ {x}</div>)}
+                                    {oneCourt && k === 0 && (
+                                        <button onClick={markPlayed} className="mt-2 ml-11 px-3 py-1.5 rounded-[10px] bg-[#34C759] text-white text-[14px] font-semibold active:opacity-80">✓ เล่นแล้ว</button>
+                                    )}
                                 </div>
                                 </React.Fragment>
                             ))}
@@ -1566,10 +1583,11 @@
                                 <span className="text-[16px] font-semibold text-gray-700">เล่นไปแล้ว</span>
                                 <span className="text-[15px] text-gray-500 tabular-nums">{done.length} คู่</span>
                             </div>
-                            {done.slice().reverse().map((g, i) => (
-                                <div key={g.start} className="px-4 py-2.5 border-b border-gray-100 last:border-0 flex gap-3 text-[15px]">
+                            {done.slice().sort((a, b) => b.start - a.start).map((g, i) => (
+                                <div key={g.start} className="px-4 py-2.5 border-b border-gray-100 last:border-0 flex items-center gap-3 text-[15px]">
                                     <span className="text-gray-500 tabular-nums w-14 shrink-0">คู่ที่ {g.no}</span>
                                     <span className="flex-1 min-w-0 text-black">{team(g.teams[0])} <span className="text-gray-400">vs</span> {team(g.teams[1])}</span>
+                                    {i === 0 && <button onClick={() => undoPlayed(g)} className="shrink-0 text-[14px] text-[#007AFF] active:opacity-70">ย้อน</button>}
                                 </div>
                             ))}
                         </div>
