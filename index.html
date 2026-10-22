@@ -277,18 +277,17 @@
 
         // ===================== จัดคู่ตีแบด =====================
         // pairing:start (JS ล้วน ไม่มี JSX: tests/pairing.js ตัดส่วนนี้ไปทดสอบใน Node)
-        // จัดคู่หน้างาน: จัดทีละเกมทีละคอร์ดจากคนที่เช็กอินอยู่ที่สนาม โดยจำทุกเกมที่เล่นไปแล้ว
-        // ลำดับสิทธิ์ลงเล่น (เด็ดขาด): ไม่ติด 2 เกมติด > เล่นน้อย (เทียบกับเวลาที่อยู่สนาม) > ยังไม่ได้เล่นเลย: มาก่อนได้ลงก่อน
-        // ในกลุ่มที่สิทธิ์เท่ากัน เลือก 4 คนด้วยคะแนน: เลี่ยงคนที่ห้ามอยู่คอร์ดเดียวกัน (PAIRING_AVOID), ชอบคนที่เพิ่งพัก,
-        // ผสมคนที่ยังไม่ค่อยได้เล่นด้วยกัน, เลี่ยงคู่หู/คู่แข่งซ้ำ และถ่วงฝีมือ B/M/H
-        // ("พักแล้วได้ลงก่อน" ไม่เด็ดขาด: ถ้าเด็ดขาด 8 คน 1 คอร์ดจะสลับกันแค่ 2 กลุ่มเดิมทั้งคืน)
+        // จัดคู่หน้างาน: จัดทีละเกมจากคนที่เช็กอินอยู่ที่สนาม โดยจำทุกเกมที่เล่นไปแล้ว กติกาเรียงตามความสำคัญ
+        // 1) โควตา: ถ้ารู้จำนวนเกมทั้งรอบ (ทุกคนเช็กอินแล้ว) ทุกคนเล่นเท่ากัน = เกม × 4 ÷ คน เศษที่เหลือให้คนที่ลงเกมที่ 1 (มาก่อน)
+        //    6 คน / 8 คน จัดตั้งแต่เกมแรกใช้แม่แบบ (PAIR_TEMPLATES) ที่รับประกันโควตาและคู่ไม่ซ้ำ
+        // 2) ห้ามเล่นเกิน 2 เกมติด (เลี่ยงไม่ได้เมื่อคนว่างไม่พอ จะมีหมายเหตุ)
+        // 3) หลากหลาย: เลี่ยงคู่หู/คู่แข่งซ้ำ ผสมคนที่ยังไม่ค่อยได้เล่นด้วยกัน แล้วถ่วงฝีมือ B/M/H
+        // 4) จัดต่อจากเกมที่เล่นไปแล้วได้เสมอ (ยังไม่รู้จำนวนเกมทั้งรอบ = เทียบจำนวนเกมกับเวลาที่อยู่สนาม มาก่อนได้ลงก่อน)
         const PAIR_SKILLS = { B: 1, M: 2, H: 3 };
         const pairSkillOf = v => PAIR_SKILLS[String(v || '').trim().toUpperCase()] || 0;   // 0 = ยังไม่ระบุ (คิดเป็น M)
-        const PAIR_GAME_MIN = 10;   // นาทีต่อเกม ใช้เทียบว่าใครเล่นน้อยเมื่อเทียบกับเวลาที่อยู่สนาม
+        const PAIR_GAME_MIN = 10;   // นาทีต่อเกม ใช้เทียบว่าใครเล่นน้อยเมื่อเทียบกับเวลาที่อยู่สนาม (ตอนยังไม่รู้จำนวนเกมทั้งรอบ)
         const PAIR_PER_HOUR = 6;    // เกมต่อชั่วโมงต่อคอร์ด (ใช้นับว่าทั้งรอบมีกี่คู่ และคู่ไหนอยู่ชั่วโมงไหน)
         const PAIR_COST = {
-            avoid: 100000,         // คนที่ห้ามเจอกันอยู่คอร์ดเดียวกัน
-            swap: 2000,            // ข้ามลำดับสิทธิ์ลงเล่น 1 คนเพื่อเลี่ยงกฎข้างบน (คูณเพิ่มถ้าคนที่ลงแทนเพิ่งเล่นเกมก่อน)
             partnerLast: 1000,     // คู่หูซ้ำกับเกมก่อนหน้าของทั้งคู่
             matchLast: 500,        // สองคู่เดิมเจอกันซ้ำจากเกมก่อนหน้า
             matchEver: 150,        // สองคู่เดิมเคยเจอกันแล้วในรอบนี้ (ต่อครั้ง)
@@ -299,14 +298,29 @@
             teamSkill: 30          // ต่อ 1 ระดับที่สองฝั่งต่างกัน
         };
 
-        // "แทน, หวาน / ต้อม; A / B" → [[['แทน','หวาน'],['ต้อม']], [['A'],['B']]] คนฝั่งซ้ายห้ามอยู่คอร์ดเดียวกับคนฝั่งขวา
-        const parseAvoidRules = text => String(text || '').split(/[;\n]/).map(part => {
-            const sides = part.split('/');
-            if (sides.length !== 2) return null;
-            const names = s => s.split(',').map(x => x.trim()).filter(Boolean);
-            const a = names(sides[0]), b = names(sides[1]);
-            return a.length && b.length ? [a, b] : null;
-        }).filter(Boolean);
+        // แม่แบบ 12 เกม 1 คอร์ด (เลข = ลำดับที่มาถึง 0 = มาคนแรก) เลือกให้เกม 1 เป็น 4 คนที่มาก่อน
+        // 6 คน: แบ่ง 3 คู่เวรพัก (4-5, 0-1, 2-3) พักวนกันคนละเกม = ทุกคนเล่น 2 พัก 1 (เล่น 8 พัก 4)
+        //   4 รอบ รอบละ 3 เกม: ไขว้คู่แบบที่ 1 → สลับคู่ไขว้ → จับคู่กับบัดดี้ที่พักด้วยกัน → รีแมตช์ (ไขว้แบบที่ 1)
+        // 8 คน: 2 ก้อน (0-3, 4-7) เกม 1-6 สลับกันลง (เล่น 1 พัก 1) ก้อนละ 3 เกม คู่หูครบทุกคู่ในก้อน
+        //   เกม 7-12 ผสมก้อนใหม่ จับคู่ข้ามก้อนเท่านั้น คู่หูไม่ซ้ำเลย (ทุกคนเล่น 6 พัก 6)
+        //   ถ้าจะเล่น 1 พัก 1 ตลอด ก้อนเดิมต้องเล่นด้วยกันทั้งคืน จึงยอมให้มีเล่น 2 เกมติดรวม 4 ครั้ง (ค้นทุกแบบแล้ว น้อยสุดที่คู่ไม่ซ้ำ)
+        const PAIR_TEMPLATES = (() => {
+            const six = [];
+            const rest = [[4, 5], [0, 1], [2, 3]];
+            for (let g = 0; g < 12; g++) {
+                const r = g % 3;
+                const [x, y] = [0, 1, 2].filter(i => i !== r).map(i => rest[i]);
+                const type = ['cross1', 'cross2', 'buddy', 'cross1'][Math.floor(g / 3)];
+                six.push(type === 'cross1' ? [[x[0], y[0]], [x[1], y[1]]]
+                    : type === 'cross2' ? [[x[0], y[1]], [x[1], y[0]]]
+                    : [[x[0], x[1]], [y[0], y[1]]]);
+            }
+            const eight = [
+                [[0, 1], [2, 3]], [[4, 5], [6, 7]], [[0, 2], [1, 3]], [[4, 6], [5, 7]], [[0, 3], [1, 2]], [[4, 7], [5, 6]],
+                [[0, 4], [1, 5]], [[2, 6], [3, 7]], [[0, 5], [1, 4]], [[2, 7], [3, 6]], [[0, 6], [2, 4]], [[1, 7], [3, 5]]
+            ];
+            return { 6: { games: six, groups: [[0, 1, 2, 3], [4, 5]] }, 8: { games: eight, groups: [[0, 1, 2, 3], [4, 5, 6, 7]] } };
+        })();
 
         const pairKey = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
         const matchKey = (t1, t2) => [pairKey(t1[0], t1[1]), pairKey(t2[0], t2[1])].sort().join('#');
@@ -315,6 +329,7 @@
             for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
             return a;
         };
+        const pairPerms = arr => (arr.length <= 1 ? [arr] : arr.flatMap((x, i) => pairPerms(arr.filter((_, j) => j !== i)).map(p => [x, ...p])));
         const gameIds = g => g.teams[0].concat(g.teams[1]);
 
         // สถิติจากเกมที่เริ่มแล้ว games: [{ teams: [[a,b],[c,d]], start, end }]
@@ -351,15 +366,12 @@
 
         // คะแนนของเกมหนึ่งเกม (ยิ่งน้อยยิ่งดี) พร้อมหมายเหตุสิ่งที่เลี่ยงไม่ได้
         const scoreGame = (teams, ctx) => {
-            const { st, skill, avoidPairs, names } = ctx;
+            const { st, skill, names } = ctx;
             let cost = 0;
             const notes = [];
             const [t1, t2] = teams;
             const all = t1.concat(t2);
-            for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
-                cost += (st.together[pairKey(all[i], all[j])] || 0) * PAIR_COST.together;
-                if (avoidPairs[pairKey(all[i], all[j])]) { cost += PAIR_COST.avoid; notes.push(`${names(all[i])} กับ ${names(all[j])} อยู่คอร์ดเดียวกัน`); }
-            }
+            for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) cost += (st.together[pairKey(all[i], all[j])] || 0) * PAIR_COST.together;
             [t1, t2].forEach(t => {
                 const k = pairKey(t[0], t[1]);
                 if (st.lastPartner[t[0]] === k && st.lastPartner[t[1]] === k) { cost += PAIR_COST.partnerLast; notes.push(`${names(t[0])} คู่กับ ${names(t[1])} ซ้ำเกมก่อน`); }
@@ -384,32 +396,25 @@
             return best;
         };
 
-        // กฎห้ามอยู่คอร์ดเดียวกัน (ชื่อ) → { "idA|idB": true }
-        const pairAvoidMap = (avoid, players) => {
-            const out = {};
-            const norm = s => String(s || '').trim().toLowerCase();
-            const ids = list => players.filter(p => list.some(n => norm(n) === norm(p.name))).map(p => p.id);
-            avoid.forEach(([a, b]) => ids(a).forEach(x => ids(b).forEach(y => { if (x !== y) out[pairKey(x, y)] = true; })));
-            return out;
-        };
-
         const pairCmp = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
 
         // คิวรอลง เรียงตามสิทธิ์: players = [{ id, name, skill, arrivedAt (ms), order (ลำดับที่มาถึง) }] เฉพาะคนที่ว่างอยู่
         // now = ลำดับเหตุการณ์ปัจจุบัน, clock = เวลาจริง (ms) ใช้คิดเวลาที่อยู่สนาม
-        const pairQueue = ({ players, games, now, clock }) => {
+        // quota = { id: เกมที่ยังเหลือตามโควตา } (ถ้ามี) ใช้แทนการเทียบกับเวลาที่อยู่สนาม: เหลือมากได้ลงก่อน ครบโควตาแล้วไว้ท้ายสุด
+        const pairQueue = ({ players, games, now, clock, quota }) => {
             const st = pairStats(games);
             return players.map(p => {
                 const streak = pairStreak(p.id, games, now);
                 const n = st.games[p.id] || 0;
                 const slots = Math.max(1, (clock - p.arrivedAt) / 60000 / PAIR_GAME_MIN);
-                return { id: p.id, order: p.order, streak, games: n, rank: [streak >= 2 ? 1 : 0, Math.round(10 * n / slots), n === 0 ? p.order : 1e6] };   // ยังไม่ได้เล่น: ก่อนคนที่เล่นแล้วเสมอ เรียงตามลำดับที่มา
+                const fair = quota ? [quota[p.id] > 0 ? 0 : 1, -(quota[p.id] || 0)] : [0, Math.round(10 * n / slots)];
+                return { id: p.id, order: p.order, streak, games: n, rank: [streak >= 2 ? 1 : 0, ...fair, n === 0 ? p.order : 1e6] };   // ยังไม่ได้เล่น: ก่อนคนที่เล่นแล้วเสมอ เรียงตามลำดับที่มา
             }).sort((a, b) => pairCmp(a.rank, b.rank) || a.streak - b.streak || a.order - b.order);
         };
 
         // เสนอเกมถัดไปของคอร์ดที่ว่าง คืน { teams, notes } หรือ null ถ้าคนว่างไม่ถึง 4
         // allPlayers = ทุกคนในรอบ (ใช้หาชื่อ/ฝีมือ) ส่วน players = คนที่ว่างพร้อมลง
-        const proposeGame = ({ players, games, now, clock, avoid = [], allPlayers, random = Math.random }) => {
+        const proposeGame = ({ players, games, now, clock, quota, allPlayers, random = Math.random }) => {
             if (players.length < 4) return null;
             const rnd = random;
             const everyone = allPlayers || players;
@@ -417,9 +422,8 @@
             everyone.forEach(p => { byId[p.id] = p; });
             const names = id => (byId[id] ? byId[id].name : id);
             const skill = id => (byId[id] && byId[id].skill) || PAIR_SKILLS.M;
-            const avoidPairs = pairAvoidMap(avoid, everyone);
-            const rows = pairQueue({ players, games, now, clock });
-            const ctx = { st: pairStats(games), skill, avoidPairs, names };
+            const rows = pairQueue({ players, games, now, clock, quota });
+            const ctx = { st: pairStats(games), skill, names };
             const streakOf = {};
             rows.forEach(r => { streakOf[r.id] = r.streak; });
 
@@ -442,20 +446,44 @@
                 a.cost += restCost(ids);
                 if (!best || a.cost < best.cost) best = a;
             }
-            // ลำดับสิทธิ์ทำให้คนที่ห้ามเจอกันต้องลงพร้อมกัน: ลองสลับทีละคนกับคนที่รออยู่ (ยอมเสียลำดับ หรือให้ใครเล่นเกินเกมติด ดีกว่าผิดกฎนี้)
-            if (best.cost >= PAIR_COST.avoid) {
-                const chosen = best.teams[0].concat(best.teams[1]);
-                const bench = rows.filter(r => !chosen.includes(r.id)).map(r => r.id);
-                chosen.forEach(x => bench.forEach(y => {
-                    const ids = chosen.map(id => (id === x ? y : id));
-                    const a = arrangeGame(ids, ctx, rnd);
-                    const cost = a.cost + restCost(ids) + PAIR_COST.swap * (1 + streakOf[y]);
-                    if (cost < best.cost) best = { ...a, cost };
-                }));
-            }
             const notes = best.notes.slice();
             gameIds(best).forEach(id => { if (streakOf[id] >= 2) notes.push(`${names(id)} เล่นเกมที่ ${streakOf[id] + 1} ติดกัน (คนไม่พอ)`); });
             return { teams: best.teams, notes };
+        };
+
+        // แม่แบบของ 6 หรือ 8 คน ใส่คนจริงลงตำแหน่ง: players เรียงตามลำดับที่มา คนในกลุ่มเดียวกันของแม่แบบสลับตำแหน่งกันได้
+        // ลองทุกแบบแล้วเลือกแบบที่ฝีมือสองฝั่งใกล้กันที่สุดทั้ง 12 เกม
+        const pairTemplate = (players, random = Math.random) => {
+            const tpl = PAIR_TEMPLATES[players.length];
+            if (!tpl) return null;
+            const byOrder = players.slice().sort((a, b) => a.order - b.order);
+            const skill = i => byOrder[i].skill || PAIR_SKILLS.M;
+            const [g1, g2] = tpl.groups.map(pairPerms);
+            let best = null;
+            g1.forEach(p1 => g2.forEach(p2 => {
+                const at = {};
+                tpl.groups[0].forEach((slot, i) => { at[slot] = p1[i]; });
+                tpl.groups[1].forEach((slot, i) => { at[slot] = p2[i]; });
+                let cost = random() * 0.5;   // แบบที่ดีเท่ากันสุ่มเลือก
+                tpl.games.forEach(([t1, t2]) => { cost += Math.abs(skill(at[t1[0]]) + skill(at[t1[1]]) - skill(at[t2[0]]) - skill(at[t2[1]])); });
+                if (!best || cost < best.cost) best = { cost, at };
+            }));
+            return tpl.games.map(([t1, t2]) => ({ teams: [t1.map(i => byOrder[best.at[i]].id), t2.map(i => byOrder[best.at[i]].id)], notes: [], locked: false }));
+        };
+
+        // โควตาทั้งรอบ: total เกม × 4 ช่อง หักช่องที่คนที่กลับไปแล้วใช้ไป แล้วหารคนที่อยู่ เศษให้คนที่ลงเกมที่ 1 ก่อน (เรียงตามลำดับที่มา)
+        // แล้วค่อยคนอื่นตามลำดับที่มา: เศษ ≤ 4 คนที่ได้เพิ่มอยู่ในเกม 1 ทั้งหมด, เศษ > 4 ทุกคนในเกม 1 ได้เพิ่ม
+        const pairTargets = (players, games, total, firstIds) => {
+            const present = new Set(players.map(p => p.id));
+            const st = pairStats(games);
+            const used = Object.keys(st.games).filter(id => !present.has(id)).reduce((n, id) => n + st.games[id], 0);
+            const slots = Math.max(0, total * 4 - used);
+            const base = Math.floor(slots / players.length), extra = slots % players.length;
+            const first = new Set(firstIds || []);
+            const order = players.slice().sort((a, b) => (first.has(b.id) - first.has(a.id)) || a.order - b.order);
+            const target = {};
+            order.forEach((p, i) => { target[p.id] = base + (i < extra ? 1 : 0); });
+            return target;
         };
 
         // คิวเกมล่วงหน้า (ใช้ร่วมกันทุกคอร์ด คอร์ดไหนว่างหยิบเกมแรกไปลง) คืนคิวใหม่ ahead เกม
@@ -464,19 +492,28 @@
         // เกมในคิวคิดต่อกันเป็นลำดับ: ถือว่าเกมก่อนหน้าเล่นจบแล้ว และกันคนในอีก (courts - 1) เกมก่อนหน้า (เล่นพร้อมกันในคอร์ดอื่น)
         // ไม่ใช้เวลาจริง: ชั่วโมงหนึ่งมี perHour เกม (PAIR_PER_HOUR × จำนวนคอร์ด) เกมที่ k ในคิวอยู่ชั่วโมงที่ floor((slotBase + k) / perHour)
         //   slotBase = จำนวนเกมที่เริ่มไปแล้ว คนที่ลงชื่อชั่วโมงเดียว (players[].hours = [ชม.แรก, ชม.สอง]) ถูกจัดเฉพาะเกมในชั่วโมงนั้น
-        const planQueue = ({ players, games, queue = [], ahead = 2, courts = 1, now, clock, slotBase = 0, perHour = 0, avoid = [], allPlayers, replan = false, random = Math.random }) => {
+        // total = จำนวนเกมทั้งรอบ (รวมที่เริ่มแล้ว) ถ้ารู้ (ทุกคนเช็กอินแล้ว) และไม่มีคนลงชั่วโมงเดียว ใช้โควตา และแม่แบบ 6/8 คนถ้าเพิ่งเริ่ม
+        const planQueue = ({ players, games, queue = [], ahead = 2, courts = 1, now, clock, slotBase = 0, perHour = 0, total = 0, allPlayers, replan = false, random = Math.random }) => {
             const present = new Set(players.map(p => p.id));
             const hoursOf = {};
             players.forEach(p => { if (p.hours) hoursOf[p.id] = p.hours; });
             const everyone = allPlayers || players;
+            const byQuota = total > 0 && !players.some(p => p.hours);
+            const planned = queue.filter(q => q && q.teams);
+            if (byQuota && total === 12 && courts === 1 && !games.length && PAIR_TEMPLATES[players.length]
+                && !planned.some(q => q.locked) && (replan || !planned.length)) {
+                return pairTemplate(players, random).slice(0, Math.max(ahead, 1));
+            }
             let t = now;
             // ประวัติสมมติ: เกมที่กำลังเล่นจบตามลำดับที่เริ่ม แล้วต่อด้วยเกมในคิวทีละเกม
             const history = games.filter(g => g.end !== null);
             const running = games.filter(g => g.end === null).sort((a, b) => a.start - b.start);
             const seq = running.slice();
             running.forEach(g => history.push({ ...g, end: ++t }));
+            const firstGame = games.slice().sort((a, b) => a.start - b.start)[0];
+            let target = byQuota && firstGame ? pairTargets(players, games, total, gameIds(firstGame)) : null;
             const out = [];
-            for (let k = 0; k < Math.max(ahead, queue.filter(q => q && q.teams && q.locked).length); k++) {
+            for (let k = 0; k < Math.max(ahead, planned.filter(q => q.locked).length); k++) {
                 const busy = new Set(seq.slice(Math.max(0, seq.length - (courts - 1))).flatMap(gameIds));
                 const hour = perHour ? Math.floor((slotBase + k) / perHour) : -1;
                 const canPlay = id => {
@@ -487,15 +524,22 @@
                 const keep = old && old.teams && gameIds(old).every(id => present.has(id)) && (old.locked || (!replan && gameIds(old).every(canPlay)));
                 let g;
                 if (keep) {
-                    g = old.locked ? { ...old, notes: checkGame({ teams: old.teams, games: history, avoid, allPlayers: everyone }) } : old;
+                    g = old.locked ? { ...old, notes: checkGame({ teams: old.teams, games: history, allPlayers: everyone }) } : old;
                 } else {
-                    const p = proposeGame({ players: players.filter(x => !busy.has(x.id) && canPlay(x.id)), games: history, now: t, clock, avoid, allPlayers: everyone, random });
+                    let quota;
+                    if (target) {
+                        const st = pairStats(history);
+                        quota = {};
+                        players.forEach(p => { quota[p.id] = target[p.id] - (st.games[p.id] || 0); });
+                    }
+                    const p = proposeGame({ players: players.filter(x => !busy.has(x.id) && canPlay(x.id)), games: history, now: t, clock, quota, allPlayers: everyone, random });
                     if (!p) break;
                     g = { teams: p.teams, notes: p.notes, locked: false };
                 }
                 out.push(g);
                 seq.push(g);
                 history.push({ teams: g.teams, start: ++t, end: ++t });
+                if (byQuota && !target) target = pairTargets(players, games, total, gameIds(g));   // เกมที่ 1 เพิ่งจัด: รู้แล้วว่าใครได้เศษ
             }
             return out;
         };
@@ -513,12 +557,67 @@
             });
         };
 
-        // คะแนนและหมายเหตุของเกมที่แอดมินจัดเอง/สลับคน (ใช้ตัววัดเดียวกับตอนเสนอ)
-        const checkGame = ({ teams, games, avoid = [], allPlayers }) => {
+        // ข้อความตารางสำหรับวางในแชท LINE (ข้อความธรรมดา ไม่มีตาราง)
+        // rows = ทุกเกม [{ no, teams, present: [id ที่อยู่สนามตอนนั้น], status: 'done' | 'live' | 'queued' }]
+        // พัก = คนที่อยู่สนามแต่ไม่ได้ลงในรอบนั้น (หลายคอร์ด: เกมที่เลขติดกันทีละ courts เกมนับเป็นรอบเดียวกัน)
+        const pairScheduleText = ({ title, rows, nameOf, courts = 1, perHour = 0 }) => {
+            const list = rows.slice().sort((a, b) => a.no - b.no);
+            const rounds = [];
+            for (let i = 0; i < list.length; i += courts) rounds.push(list.slice(i, i + courts));
+            const ids = g => g.teams[0].concat(g.teams[1]);
+            const restOf = round => {
+                const playing = new Set(round.flatMap(ids));
+                const present = [...new Set(round.flatMap(g => g.present || []))];
+                return present.filter(id => !playing.has(id));
+            };
+            const started = list.filter(g => g.status === 'done').map(g => g.no);   // เกมที่กำลังเล่นมีป้ายแยกในบรรทัดของมันเอง
+            const range = nos => (nos.length > 1 && nos[nos.length - 1] - nos[0] === nos.length - 1 ? `${nos[0]}-${nos[nos.length - 1]}` : nos.join(', '));
+            const hourOf = no => (perHour ? Math.floor((no - 1) / perHour) : 0);
+            const lines = ['🏸 ตารางตีแบดวันนี้ 🏸'];
+            if (title) lines.push(title);
+            if (started.length) lines.push(`(เกม ${range(started)} เล่นไปแล้ว เป็นข้อมูลเดิม)`);
+            lines.push('');
+            list.forEach((g, k) => {
+                if (perHour && k && hourOf(g.no) !== hourOf(list[k - 1].no)) lines.push(`— ชั่วโมงที่ ${hourOf(g.no) + 1} —`);
+                const round = rounds[Math.floor(k / courts)];
+                const rest = k % courts === round.length - 1 ? restOf(round) : [];
+                lines.push(`เกม ${g.no}: ${g.teams[0].map(nameOf).join(' ')} VS ${g.teams[1].map(nameOf).join(' ')}`
+                    + (rest.length ? `  (พัก: ${rest.map(nameOf).join(', ')})` : '') + (g.status === 'live' ? '  ← กำลังเล่น' : ''));
+            });
+            // สถิติ: เล่น/พักต่อคน, เล่นติดกันนานสุด (นับเป็นรอบ), คู่หูซ้ำ, คู่แข่งที่เจอ
+            const everyone = [...new Set(list.flatMap(g => (g.present || []).concat(ids(g))))];
+            const played = {}, rested = {}, run = {}, maxRun = {}, partner = {}, opp = {};
+            rounds.forEach(round => {
+                const playing = new Set(round.flatMap(ids));
+                const rest = new Set(restOf(round));
+                everyone.forEach(id => {
+                    if (playing.has(id)) { played[id] = (played[id] || 0) + 1; run[id] = (run[id] || 0) + 1; maxRun[id] = Math.max(maxRun[id] || 0, run[id]); }
+                    else { run[id] = 0; if (rest.has(id)) rested[id] = (rested[id] || 0) + 1; }
+                });
+                round.forEach(g => {
+                    g.teams.forEach(t => { const k = pairKey(t[0], t[1]); partner[k] = (partner[k] || 0) + 1; });
+                    g.teams[0].forEach(a => g.teams[1].forEach(b => { (opp[a] = opp[a] || new Set()).add(b); (opp[b] = opp[b] || new Set()).add(a); }));
+                });
+            });
+            const quota = {};
+            everyone.forEach(id => { const k = `เล่น ${played[id] || 0} พัก ${rested[id] || 0}`; (quota[k] = quota[k] || []).push(nameOf(id)); });
+            const tired = everyone.filter(id => maxRun[id] > 2);
+            const repeats = Object.keys(partner).filter(k => partner[k] > 1);
+            const oppAvg = everyone.length ? everyone.reduce((n, id) => n + (opp[id] ? opp[id].size : 0), 0) / everyone.length : 0;
+            lines.push('', '📊 สรุปสถิติ:');
+            lines.push('- โควตา: ' + Object.keys(quota).map(k => `${quota[k].join(' ')} ${k}`).join(' / '));
+            lines.push('- สภาพร่างกาย: ' + (tired.length ? tired.map(id => `${nameOf(id)} เล่น ${maxRun[id]} เกมติด`).join(', ') : 'ไม่มีใครเล่นเกิน 2 เกมติด ✅'));
+            lines.push('- การจับคู่: ' + (repeats.length
+                ? `คู่หูซ้ำ ${repeats.length} คู่ (${repeats.map(k => `${k.split('|').map(nameOf).join('+')} ${partner[k]} ครั้ง`).join(', ')})`
+                : 'คู่หูไม่ซ้ำกันเลย ✅') + (everyone.length > 1 ? ` เจอคู่แข่งเฉลี่ยคนละ ${oppAvg.toFixed(1)} จาก ${everyone.length - 1} คน` : ''));
+            return lines.join('\n');
+        };
+
+        // หมายเหตุของเกมที่แอดมินจัดเอง/สลับคน (ใช้ตัววัดเดียวกับตอนเสนอ)
+        const checkGame = ({ teams, games, allPlayers }) => {
             const byId = {};
             allPlayers.forEach(p => { byId[p.id] = p; });
-            const avoidPairs = pairAvoidMap(avoid, allPlayers);
-            return scoreGame(teams, { st: pairStats(games), skill: id => (byId[id] && byId[id].skill) || PAIR_SKILLS.M, avoidPairs, names: id => (byId[id] ? byId[id].name : id) }).notes;
+            return scoreGame(teams, { st: pairStats(games), skill: id => (byId[id] && byId[id].skill) || PAIR_SKILLS.M, names: id => (byId[id] ? byId[id].name : id) }).notes;
         };
         // pairing:end
 
@@ -844,7 +943,6 @@
             NOTIFY_PLAY_DAY:      { label: 'ข้อความแจ้งเตือน 10:00', type: 'bool', note: 'ส่งข้อความโพสต์กลุ่มให้แอดมินตอน 10:00 ของวันเล่น' },
             BOOK_NOTICE_DAYS:     { label: 'แจ้งจำนวนคนเพื่อจองคอร์ด', unit: 'วัน', type: 'number', note: 'แจ้งแอดมินก่อนวันเล่นกี่วัน (เฉพาะรอบวันหยุด)' },
             POINT_CARD_URL:       { label: 'ลิงก์รับแต้ม', type: 'text', hint: 'https://...', note: 'ลิงก์บัตรสะสมแต้มจาก LINE OA ใช้ลิงก์เดียวกับทุกรอบ ผู้เล่นที่ลงชื่อจะได้การ์ดราว 08:30 ของวันถัดจากวันเล่น กดรับได้ถึงเที่ยงคืนวันนั้น ระบบเช็กสิทธิ์ก่อนเปิดลิงก์ ว่าง = ไม่ส่งการ์ด' },
-            PAIRING_AVOID:        { label: 'ห้ามอยู่คอร์ดเดียวกัน', type: 'text', hint: 'แทน, หวาน / ต้อม', note: 'คนฝั่งซ้ายของ / จะไม่ถูกจัดลงคอร์ดเดียวกับคนฝั่งขวา (อยู่เกมเดียวกันต่างคอร์ดได้) ชื่อต้องตรงกับชื่อสมาชิก คั่นชื่อด้วย , และคั่นหลายกฎด้วย ;' },
             POINT_CARD_EXPIRES:   { label: 'วันหมดอายุของลิงก์', type: 'date', note: 'ถึงวันนี้ระบบแจ้งแอดมินให้ใส่ลิงก์ใหม่ ผ่านวันนี้ไปแล้วผู้เล่นจะไม่ได้รับการ์ดและกดรับแต้มไม่ได้ ว่าง = ไม่มีวันหมดอายุ' }
         };
         const SETTING_GROUPS = [
@@ -852,10 +950,9 @@
             { title: 'วันหยุด', keys: ['WEEKEND_MIN_PLAYERS', 'WEEKEND_CLOSE_DAYS'] },
             { title: 'ค่าใช้จ่าย', keys: ['COST_SPLIT_BASE', 'SHUTTLECOCK_PRICE', 'SHUTTLES_PER_SESSION'] },
             { title: 'การแจ้งเตือนแอดมิน', keys: ['NOTIFY_CANCEL', 'NOTIFY_PLAY_DAY', 'BOOK_NOTICE_DAYS'] },
-            { title: 'บัตรสะสมแต้ม', keys: ['POINT_CARD_URL', 'POINT_CARD_EXPIRES'] },
-            { title: 'จัดคู่', keys: ['PAIRING_AVOID'] }
+            { title: 'บัตรสะสมแต้ม', keys: ['POINT_CARD_URL', 'POINT_CARD_EXPIRES'] }
         ];
-        const HIDDEN_SETTING_KEYS = ['ADMIN_LINE_IDS', 'LINE_CHANNEL_ID', 'LINE_POST_TEMPLATE'];
+        const HIDDEN_SETTING_KEYS = ['ADMIN_LINE_IDS', 'LINE_CHANNEL_ID', 'LINE_POST_TEMPLATE', 'PAIRING_AVOID'];   // PAIRING_AVOID เลิกใช้แล้ว (แถวในชีทอาจยังอยู่)
         const SAMPLE_TPL_VARS = {
             'วัน': 'วันพฤหัสบดี 15-10-26', 'หัวข้อ': 'วันพฤหัสบดี/15/10/26 รพ.ศรีธัญญา', 'วันที่': 'พฤหัสบดี 15 ตุลาคม 2569', 'สนาม': 'รพ.ศรีธัญญา', 'เวลา': '18:00-20:00',
             'ค่าคอร์ด': 200, 'ค่าลูก': 130, 'คนละ': 55, 'หาร': 6,
@@ -1058,7 +1155,7 @@
         const LIVE_EMPTY = { courts: 1, ahead: 2, tick: 0, checkins: [], extra: [], games: [], queue: [], skills: {}, nicknames: {} };
         const LIVE_POLL_MS = 10000;
         const liveBoardOf = state => ({ ...LIVE_EMPTY, ...(state || {}) });
-        function LiveBoard({ sessionId, title, players, members, hours = 2, avoidText, api, canSync, onShare, showToast }) {
+        function LiveBoard({ sessionId, title, players, members, hours = 2, api, canSync, onShare, showToast }) {
             const store = 'board_' + sessionId;
             const saved = useMemo(() => cacheRead(store) || {}, [store]);   // { board, version, dirty }
             const [st, setSt] = useState(() => liveBoardOf(saved.board));
@@ -1141,7 +1238,6 @@
                 return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
             }, [sessionId]);
 
-            const avoid = parseAvoidRules(avoidText);
             // guest: ใช้ฝีมือ/ชื่อเล่นของรอบนี้ (label = ชื่อเดิม เช่น "guest 2")
             const everyoneOf = s => players.concat(s.extra.filter(x => !players.some(p => p.id === x.id))).map(p => {
                 if (!p.guest) return p;
@@ -1165,7 +1261,7 @@
                 const find = id => all.find(p => p.id === id) || { id, name: id };
                 const here = s.checkins.map((c, order) => ({ ...c, order })).filter(c => !c.left).map(c => ({ ...find(c.id), arrivedAt: c.at, order: c.order }));
                 const planned = planQueue({ players: here, games: s.games, queue: s.queue, ahead: aheadOf(s), courts: s.courts, now: s.tick, clock,
-                    slotBase: s.games.length, perHour: perHour(s), avoid, allPlayers: all, replan });
+                    slotBase: s.games.length, perHour: perHour(s), total: allIn(s) ? hours * perHour(s) : 0, allPlayers: all, replan });
                 return { ...s, queue: numberQueue(planned, s.queue, s.games) };
             };
             // ทุกการกดผ่านที่นี่: แก้กระดานในเครื่องทันที จำไว้ในรายการรอบันทึก แล้วส่งขึ้นชีท
@@ -1247,7 +1343,7 @@
                 const k = readyFor(s);
                 if (k === -1) return s;
                 const g = s.queue[k];
-                return { ...s, tick: s.tick + 1, games: [...s.games, { no: g.no, court: c, teams: g.teams, start: s.tick + 1, end: null, startedAt: Date.now() }], queue: s.queue.filter((_, j) => j !== k) };
+                return { ...s, tick: s.tick + 1, games: [...s.games, { no: g.no, court: c, teams: g.teams, present: s.checkins.filter(x => !x.left).map(x => x.id), start: s.tick + 1, end: null, startedAt: Date.now() }], queue: s.queue.filter((_, j) => j !== k) };
             });
             const endGame = c => update(s => {
                 const t = s.tick + 1;
@@ -1301,20 +1397,14 @@
             const team = t => t.map(nameOf).join(' + ');
             const hourOfNo = no => Math.floor(((no || 1) - 1) / perHour(st));   // คู่ที่ 1-6 (ต่อคอร์ด) = ชั่วโมงแรก
             const done = st.games.filter(g => g.end !== null);
-            const counts = st.checkins.map(c => c.id).filter(id => gamesOf(id) > 0);
-            const text = [
-                `🏸 จัดคู่ ${title}`,
-                ...Array.from({ length: st.courts }, (_, c) => onCourt(c)).map((g, c) => g && `ตอนนี้ คอร์ด ${c + 1}: คู่ที่ ${g.no} ${team(g.teams[0])} vs ${team(g.teams[1])}`).filter(Boolean),
-                st.queue.length ? '\nคิว' : '',
-                ...st.queue.flatMap((g, k) => [
-                    ...(k > 0 && hourOfNo(g.no) !== hourOfNo(st.queue[k - 1].no) ? [`— ชั่วโมงที่ ${hourOfNo(g.no) + 1} —`] : []),
-                    `คู่ที่ ${g.no}: ${team(g.teams[0])} vs ${team(g.teams[1])}`
-                ]),
-                bench.length ? `ยังไม่มีคิว: ${bench.map(q => nameOf(q.id)).join(', ')}` : '',
-                done.length ? '\nเล่นไปแล้ว' : '',
-                ...done.map(g => `คู่ที่ ${g.no}: ${team(g.teams[0])} vs ${team(g.teams[1])}`),
-                counts.length ? '\nจำนวนเกม: ' + counts.map(id => `${nameOf(id)} ${gamesOf(id)}`).join(', ') : ''
-            ].filter(Boolean).join('\n');
+            // ข้อความ LINE: ทุกเกม (เล่นแล้ว กำลังเล่น ในคิว) พร้อมคนพัก และสรุปสถิติ
+            const hereIds = here.map(c => c.id);
+            const canPlayNo = (id, no) => { const h = (byId[id] || {}).hours; return !h || h[Math.min(hourOfNo(no), h.length - 1)] !== false; };
+            const text = pairScheduleText({
+                title, nameOf, courts: st.courts, perHour: perHour(st),
+                rows: st.games.map(g => ({ no: g.no, teams: g.teams, present: g.present || hereIds, status: g.end === null ? 'live' : 'done' }))
+                    .concat(st.queue.map(g => ({ no: g.no, teams: g.teams, present: hereIds.filter(id => canPlayNo(id, g.no)), status: 'queued' })))
+            });
             const copy = async () => {
                 if (await copyText(text)) { setCopied(true); setTimeout(() => setCopied(false), 2000); }
                 else showToast('คัดลอกไม่ได้', 'error');
@@ -2890,7 +2980,7 @@
                             {/* Admin: on-court pairing */}
                             {isAdminUser && !si.isCancelled && (
                                 <LiveBoard key={s.Session_ID} sessionId={s.Session_ID} title={`${fmtShort(si.date)} ${s.Location || ''}`.trim()}
-                                    avoidText={appSettings.PAIRING_AVOID} onShare={shareToLine} showToast={showToast}
+                                    onShare={shareToLine} showToast={showToast}
                                     api={sendApiRequest} canSync={tokenFresh}
                                     players={currentRegs.map(r => ({ ...playerOf(r.User_ID), hours: si.isWorkday && hoursOf(r) !== 'All' ? [inH1(r), inH2(r)] : undefined }))}
                                     members={users.filter(u => u.User_ID).map(u => playerOf(u.User_ID))
