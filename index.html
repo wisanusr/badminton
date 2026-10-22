@@ -1053,7 +1053,8 @@
         // กระดานใช้ร่วมกันระหว่างแอดมินผ่านชีท Live (backend/Live.gs): กดแล้วหน้าจอเปลี่ยนทันที แล้วค่อยบันทึกเบื้องหลัง
         // ถ้าแอดมินอีกคนบันทึกไปก่อน (เวอร์ชันไม่ตรง) server ส่งกระดานล่าสุดมา หน้าเว็บทำสิ่งที่กดค้างไว้ซ้ำบนกระดานนั้นแล้วบันทึกใหม่
         // เครื่องอื่นดึงกระดานใหม่ทุก LIVE_POLL_MS ขณะเปิดหน้า และทันทีที่กลับมาที่แอป สำเนาในเครื่อง (localStorage) ใช้ตอนเน็ตหลุด
-        const LIVE_EMPTY = { courts: 1, ahead: 2, tick: 0, checkins: [], extra: [], games: [], queue: [] };
+        // skills = ฝีมือ guest เฉพาะรอบนี้ { id: 1|2|3 } (guest แต่ละรอบเป็นใครก็ไม่รู้ จึงไม่ใช้ Skill_Level ในชีท Users)
+        const LIVE_EMPTY = { courts: 1, ahead: 2, tick: 0, checkins: [], extra: [], games: [], queue: [], skills: {} };
         const LIVE_POLL_MS = 10000;
         const liveBoardOf = state => ({ ...LIVE_EMPTY, ...(state || {}) });
         function LiveBoard({ sessionId, title, players, members, hours = 2, avoidText, api, canSync, onShare, showToast }) {
@@ -1138,7 +1139,8 @@
             }, [sessionId]);
 
             const avoid = parseAvoidRules(avoidText);
-            const everyoneOf = s => players.concat(s.extra.filter(x => !players.some(p => p.id === x.id)));
+            const everyoneOf = s => players.concat(s.extra.filter(x => !players.some(p => p.id === x.id)))
+                .map(p => (p.guest && s.skills && s.skills[p.id] ? { ...p, skill: s.skills[p.id] } : p));
             const everyone = everyoneOf(st);
             const byId = {};
             everyone.forEach(p => { byId[p.id] = p; });
@@ -1200,10 +1202,17 @@
                 const add = players.filter(p => !s.checkins.some(c => c.id === p.id)).map(p => ({ id: p.id, at, left: false }));
                 return { ...s, checkins: [...s.checkins, ...add] };
             }, true);
+            // ฝีมือ guest รอบนี้ (แตะระดับเดิมอีกครั้ง = กลับเป็นไม่ระบุ) จัดคู่ที่ยังไม่ล็อกใหม่ให้ถ่วงฝีมือ
+            const setGuestSkill = (id, v) => update(s => {
+                const skills = { ...(s.skills || {}) };
+                if (skills[id] === v) delete skills[id]; else skills[id] = v;
+                return { ...s, skills };
+            }, true);
             const addGuest = () => {
                 let k = 1;
-                while (everyone.some(p => p.id === 'guest:' + k)) k++;
-                const g = { id: 'guest:' + k, name: 'guest ' + k, skill: 0 };
+                // เลขที่ยังว่างทั้ง id และชื่อ (guest ที่ลงชื่อในรอบชื่อ guest 1, guest 2 ... อยู่แล้ว)
+                while (everyone.some(p => p.id === 'guest:' + k || String(p.name).toLowerCase() === 'guest ' + k)) k++;
+                const g = { id: 'guest:' + k, name: 'guest ' + k, skill: 0, guest: true };
                 update(s => ({ ...s, extra: [...s.extra, g], checkins: [...s.checkins, { id: g.id, at: Date.now(), left: false }] }), true);
             };
 
@@ -1293,7 +1302,8 @@
                     <SkillDot skill={(byId[id] || {}).skill || 0} />{nameOf(id)}
                 </button>
             );
-            const unrated = everyone.filter(p => here.some(c => c.id === p.id) && !p.skill).length;
+            const unrated = everyone.filter(p => here.some(c => c.id === p.id) && !p.skill && !p.guest).length;
+            const guests = everyone.filter(p => p.guest);
             const notHere = players.filter(p => !checkin(p.id));
             const gone = st.checkins.filter(c => c.left);
             const freeCourts = Array.from({ length: st.courts }, (_, c) => c).filter(c => !onCourt(c));
@@ -1340,6 +1350,26 @@
                                 <button onClick={() => setPickWalkIn(true)} className="text-[15px] font-medium text-[#007AFF] active:opacity-70">+ walk-in</button>
                                 <button onClick={addGuest} className="text-[15px] font-medium text-[#FF9500] active:opacity-70">+ guest</button>
                             </div>
+                            {guests.length > 0 && (
+                                <div className="mt-3 pt-3 border-t border-gray-100">
+                                    <div className="text-[13px] text-gray-500 mb-1.5">ฝีมือ guest รอบนี้</div>
+                                    {guests.map(p => {
+                                        const cur = (st.skills || {})[p.id] || 0;
+                                        return (
+                                            <div key={p.id} className="flex items-center justify-between gap-3 py-1">
+                                                <span className={`text-[15px] ${checkin(p.id) ? 'text-black' : 'text-gray-400'}`}>{p.name}</span>
+                                                <div className="flex bg-[#E9E9EA] rounded-[8px] p-0.5">
+                                                    {[1, 2, 3].map(v => (
+                                                        <button key={v} onClick={() => setGuestSkill(p.id, v)} aria-label={`${p.name} ฝีมือ ${SKILL_LETTER[v]}`}
+                                                            className={`w-10 py-1 text-[13px] rounded-[6px] ${cur === v ? 'bg-white shadow-sm font-semibold text-black' : 'text-gray-500'}`}>{SKILL_LETTER[v]}</button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    <div className="text-[12px] text-gray-500 mt-1">B มือใหม่ · M กลาง · H เก่ง ไม่เลือก = คิดเป็น M ใช้เฉพาะรอบนี้</div>
+                                </div>
+                            )}
                             {unrated > 0 && <div className="text-[12px] text-gray-500 mt-2">? = ยังไม่ระบุระดับฝีมือ (คิดเป็น M) ตั้งได้ที่ จัดการข้อมูล &gt; สมาชิก</div>}
                         </div>
                         <Stepper label="จำนวนคอร์ด" value={st.courts} min={1} max={4} onChange={setCourts} />
@@ -2253,7 +2283,7 @@
             // ผู้เล่นสำหรับจัดคู่: ชื่อที่แสดง + ระดับฝีมือ
             const playerOf = (id) => {
                 const u = users.find(x => String(x.User_ID) === String(id)) || {};
-                return { id: String(id), name: guestLabel(getUserName(id)), skill: pairSkillOf(u.Skill_Level) };
+                return { id: String(id), name: guestLabel(getUserName(id)), skill: pairSkillOf(u.Skill_Level), guest: isGuestName(getUserName(id)) };
             };
             const getUserPicture = (id) => {
                 if (String(id) === myId && lineProfile && lineProfile.picture) return lineProfile.picture;
