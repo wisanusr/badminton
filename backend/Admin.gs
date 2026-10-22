@@ -124,15 +124,12 @@ function sessionTypeForDate(date) {
 
 const READONLY_SETTINGS = ["ADMIN_PASS", "ADMIN_LINE_IDS", "LINE_CHANNEL_ID"]; // ไม่ส่งออก ไม่ให้แก้ผ่านหน้าเว็บ
 
-const CREATABLE_SETTINGS = ["LINE_POST_TEMPLATE", "POINT_CARD_URL", "POINT_CARD_EXPIRES", "PAIRING_AVOID"];
-
-const PAIRING_AVOID_DESC = "จัดคู่: คนฝั่งซ้ายของ / ห้ามอยู่คอร์ดเดียวกับคนฝั่งขวา คั่นชื่อด้วย , หลายกฎคั่นด้วย ; (เช่น แทน, หวาน / ต้อม)";
+const CREATABLE_SETTINGS = ["LINE_POST_TEMPLATE", "POINT_CARD_URL", "POINT_CARD_EXPIRES"];
 
 const CREATABLE_SETTING_DESC = {
   LINE_POST_TEMPLATE: "รูปแบบข้อความโพสต์กลุ่ม LINE (แก้จากหน้าจัดการข้อมูล)",
   POINT_CARD_URL: "ลิงก์บัตรสะสมแต้มของ LINE OA (ผู้เล่นเห็นหลังระบบเช็กว่าลงชื่อ ว่าง = ไม่ส่งการ์ดแต้ม)",
-  POINT_CARD_EXPIRES: "วันหมดอายุของลิงก์รับแต้ม yyyy-MM-dd (ถึงวันนี้แจ้งแอดมินให้ใส่ลิงก์ใหม่ ว่าง = ไม่มีวันหมดอายุ)",
-  PAIRING_AVOID: PAIRING_AVOID_DESC
+  POINT_CARD_EXPIRES: "วันหมดอายุของลิงก์รับแต้ม yyyy-MM-dd (ถึงวันนี้แจ้งแอดมินให้ใส่ลิงก์ใหม่ ว่าง = ไม่มีวันหมดอายุ)"
 };
 
 function adminGetSettings(ss) {
