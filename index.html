@@ -1194,10 +1194,16 @@
                     if (window.confirm(`${nameOf(id)} กลับมาเล่นต่อ?`)) update(s => ({ ...s, checkins: s.checkins.map(x => x.id === id ? { ...x, left: false, at: Date.now() } : x) }), true);
                     return;
                 }
+                // guest ที่เช็กอินแล้ว: เปิดแผ่นเดิมให้แก้ชื่อเล่น/ฝีมือ (กลับบ้าน/ยกเลิกเช็กอินอยู่ในแผ่น)
+                if ((byId[id] || {}).guest) return openAsk(id, 'edit');
+                leaveOrUndo(id, true);
+            };
+            // ยังไม่ได้เล่น = ยกเลิกเช็กอิน, เล่นแล้ว = กลับบ้าน (ไม่ถูกจัดอีก) ask = ถามยืนยันก่อน
+            const leaveOrUndo = (id, ask) => {
                 if (playingNow.has(id)) return showToast(`${nameOf(id)} กำลังเล่นอยู่ จบเกมก่อน`, 'error');
                 if (gamesOf(id) === 0) {
-                    if (window.confirm(`ยกเลิกเช็กอิน ${nameOf(id)}?`)) update(s => ({ ...s, checkins: s.checkins.filter(x => x.id !== id) }), true);
-                } else if (window.confirm(`${nameOf(id)} กลับบ้านแล้ว? (จะไม่ถูกจัดลงเกมอีก)`)) {
+                    if (!ask || window.confirm(`ยกเลิกเช็กอิน ${nameOf(id)}?`)) update(s => ({ ...s, checkins: s.checkins.filter(x => x.id !== id) }), true);
+                } else if (!ask || window.confirm(`${nameOf(id)} กลับบ้านแล้ว? (จะไม่ถูกจัดลงเกมอีก)`)) {
                     update(s => ({ ...s, checkins: s.checkins.map(x => x.id === id ? { ...x, left: true } : x) }), true);
                 }
             };
@@ -1211,12 +1217,6 @@
                 const at = Date.now();
                 const add = players.filter(p => !s.checkins.some(c => c.id === p.id)).map(p => ({ id: p.id, at, left: false }));
                 return { ...s, checkins: [...s.checkins, ...add] };
-            }, true);
-            // ฝีมือ guest รอบนี้ (แตะระดับเดิมอีกครั้ง = กลับเป็นไม่ระบุ) จัดคู่ที่ยังไม่ล็อกใหม่ให้ถ่วงฝีมือ
-            const setGuestSkill = (id, v) => update(s => {
-                const skills = { ...(s.skills || {}) };
-                if (skills[id] === v) delete skills[id]; else skills[id] = v;
-                return { ...s, skills };
             }, true);
             const addGuest = () => {
                 let k = 1;
@@ -1327,7 +1327,6 @@
                 </button>
             );
             const unrated = everyone.filter(p => here.some(c => c.id === p.id) && !p.skill && !p.guest).length;
-            const guests = everyone.filter(p => p.guest);
             const notHere = players.filter(p => !checkin(p.id));
             const gone = st.checkins.filter(c => c.left);
             const freeCourts = Array.from({ length: st.courts }, (_, c) => c).filter(c => !onCourt(c));
@@ -1360,6 +1359,7 @@
                                     <button key={c.id} onClick={() => tapPlayer(c.id)} className="pl-1 pr-3 py-1 inline-flex items-center gap-1.5 rounded-full text-[15px] font-medium bg-[#007AFF]/10 text-[#007AFF]">
                                         <span className="w-5 h-5 rounded-full bg-[#007AFF] text-white text-[11px] font-bold flex items-center justify-center tabular-nums">{i + 1}</span>
                                         {nameOf(c.id)}
+                                        {(byId[c.id] || {}).guest && <SkillDot skill={byId[c.id].skill || 0} />}
                                     </button>
                                 ))}
                                 {notHere.map(p => (
@@ -1374,28 +1374,6 @@
                                 <button onClick={() => setPickWalkIn(true)} className="text-[15px] font-medium text-[#007AFF] active:opacity-70">+ walk-in</button>
                                 <button onClick={addGuest} className="text-[15px] font-medium text-[#FF9500] active:opacity-70">+ guest</button>
                             </div>
-                            {guests.length > 0 && (
-                                <div className="mt-3 pt-3 border-t border-gray-100">
-                                    <div className="text-[13px] text-gray-500 mb-1.5">guest รอบนี้ (แตะชื่อเพื่อใส่ชื่อเล่น)</div>
-                                    {guests.map(p => {
-                                        const cur = (st.skills || {})[p.id] || 0;
-                                        return (
-                                            <div key={p.id} className="flex items-center justify-between gap-3 py-1">
-                                                <button onClick={() => openAsk(p.id, 'edit')} className={`min-w-0 truncate text-left text-[15px] ${checkin(p.id) ? 'text-black' : 'text-gray-400'}`}>
-                                                    {p.name}{p.name !== p.label && <span className="text-[12px] text-gray-400"> ({p.label})</span>}
-                                                </button>
-                                                <div className="flex bg-[#E9E9EA] rounded-[8px] p-0.5">
-                                                    {[1, 2, 3].map(v => (
-                                                        <button key={v} onClick={() => setGuestSkill(p.id, v)} aria-label={`${p.name} ฝีมือ ${SKILL_LETTER[v]}`}
-                                                            className={`w-10 py-1 text-[13px] rounded-[6px] ${cur === v ? 'bg-white shadow-sm font-semibold text-black' : 'text-gray-500'}`}>{SKILL_LETTER[v]}</button>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                    <div className="text-[12px] text-gray-500 mt-1">B มือใหม่ · M กลาง · H เก่ง ไม่เลือก = คิดเป็น M ชื่อเล่นและฝีมือใช้เฉพาะรอบนี้</div>
-                                </div>
-                            )}
                             {unrated > 0 && <div className="text-[12px] text-gray-500 mt-2">? = ยังไม่ระบุระดับฝีมือ (คิดเป็น M) ตั้งได้ที่ จัดการข้อมูล &gt; สมาชิก</div>}
                         </div>
                         <Stepper label="จำนวนคอร์ด" value={st.courts} min={1} max={4} onChange={setCourts} />
@@ -1534,6 +1512,11 @@
                                 <button onClick={() => answerAsk(0)} className="w-full py-3 text-[15px] text-[#007AFF] active:opacity-70">
                                     {ask.mode === 'edit' ? 'บันทึกชื่อ (ฝีมือเท่าเดิม)' : 'ข้าม (คิดเป็น M)'}
                                 </button>
+                                {ask.mode === 'edit' && checkin(ask.id) && !checkin(ask.id).left && (
+                                    <button onClick={() => { const id = ask.id; setAsk(null); leaveOrUndo(id, false); }} className="w-full py-3 text-[15px] text-[#FF3B30] active:opacity-70">
+                                        {gamesOf(ask.id) === 0 ? 'ยกเลิกเช็กอิน' : 'กลับบ้านแล้ว (ไม่จัดลงเกมอีก)'}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}
