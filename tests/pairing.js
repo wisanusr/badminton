@@ -373,7 +373,7 @@ test('quota carries on from games already played (rule 4): the rest of the eveni
   }
 });
 
-test('pairScheduleText: LINE text with games, who rests, played games marked, and the stats', () => {
+test('pairScheduleText: LINE text with games, played games marked, and the stats (rests only in the quota)', () => {
   const names = { a: 'A', b: 'B', c: 'C', d: 'D', e: 'E', f: 'F' };
   const all = Object.keys(names);
   const rows = PAIR_TEMPLATES[6].games.map((t, i) => ({
@@ -383,7 +383,8 @@ test('pairScheduleText: LINE text with games, who rests, played games marked, an
   const lines = text.split('\n');
   assert.strictEqual(lines[0], '🏸 ตารางตีแบดวันนี้ 🏸');
   assert(lines.includes('(เกม 1-2 เล่นไปแล้ว เป็นข้อมูลเดิม)'), 'only finished games count as played');
-  assert(lines.includes('เกม 1: A C VS B D  (พัก: E, F)'), text);
+  assert(lines.includes('เกม 1: A C VS B D'), text);
+  assert(!text.includes('พัก:'), 'no rest list per game');
   assert(lines.some(l => l.startsWith('เกม 3: ') && l.endsWith('← กำลังเล่น')));
   assert(lines.includes('— ชั่วโมงที่ 2 —'));
   assert(lines.includes('- โควตา: A B C D E F เล่น 8 พัก 4'), text);

@@ -562,7 +562,8 @@
 
         // ข้อความตารางสำหรับวางในแชท LINE (ข้อความธรรมดา ไม่มีตาราง)
         // rows = ทุกเกม [{ no, teams, present: [id ที่อยู่สนามตอนนั้น], status: 'done' | 'live' | 'queued' }]
-        // พัก = คนที่อยู่สนามแต่ไม่ได้ลงในรอบนั้น (หลายคอร์ด: เกมที่เลขติดกันทีละ courts เกมนับเป็นรอบเดียวกัน)
+        // ไม่แสดงรายชื่อคนพักในแต่ละเกม แต่นับไว้ในสรุปโควตา: พัก = คนที่อยู่สนามแต่ไม่ได้ลงในรอบนั้น
+        // (หลายคอร์ด: เกมที่เลขติดกันทีละ courts เกมนับเป็นรอบเดียวกัน)
         const pairScheduleText = ({ title, rows, nameOf, courts = 1, perHour = 0 }) => {
             const list = rows.slice().sort((a, b) => a.no - b.no);
             const rounds = [];
@@ -582,10 +583,7 @@
             lines.push('');
             list.forEach((g, k) => {
                 if (perHour && k && hourOf(g.no) !== hourOf(list[k - 1].no)) lines.push(`— ชั่วโมงที่ ${hourOf(g.no) + 1} —`);
-                const round = rounds[Math.floor(k / courts)];
-                const rest = k % courts === round.length - 1 ? restOf(round) : [];
-                lines.push(`เกม ${g.no}: ${g.teams[0].map(nameOf).join(' ')} VS ${g.teams[1].map(nameOf).join(' ')}`
-                    + (rest.length ? `  (พัก: ${rest.map(nameOf).join(', ')})` : '') + (g.status === 'live' ? '  ← กำลังเล่น' : ''));
+                lines.push(`เกม ${g.no}: ${g.teams[0].map(nameOf).join(' ')} VS ${g.teams[1].map(nameOf).join(' ')}` + (g.status === 'live' ? '  ← กำลังเล่น' : ''));
             });
             // สถิติ: เล่น/พักต่อคน, เล่นติดกันนานสุด (นับเป็นรอบ), คู่หูซ้ำ, คู่แข่งที่เจอ
             const everyone = [...new Set(list.flatMap(g => (g.present || []).concat(ids(g))))];
@@ -1242,8 +1240,8 @@
             const leaveOrUndo = (id, ask) => {
                 if (playingNow.has(id)) return showToast(`${nameOf(id)} กำลังเล่นอยู่ จบเกมก่อน`, 'error');
                 if (gamesOf(id) === 0) {
-                    if (!ask || window.confirm(`ยกเลิกเช็กอิน ${nameOf(id)}?`)) update(s => ({ ...s, checkins: s.checkins.filter(x => x.id !== id) }), true);
-                } else if (!ask || window.confirm(`${nameOf(id)} กลับบ้านแล้ว? (จะไม่ถูกจัดลงเกมอีก)`)) {
+                    if (!ask || window.confirm(`ยกเลิก Check in ${nameOf(id)}?`)) update(s => ({ ...s, checkins: s.checkins.filter(x => x.id !== id) }), true);
+                } else if (!ask || window.confirm(`${nameOf(id)} กลับแล้ว?`)) {
                     update(s => ({ ...s, checkins: s.checkins.map(x => x.id === id ? { ...x, left: true } : x) }), true);
                 }
             };
@@ -1296,7 +1294,7 @@
             // เริ่มผิดคู่: เอาคู่นี้กลับไปหัวคิว (เลขเดิม ล็อกไว้) ไม่นับเป็นเกมที่เล่น
             const undoGame = c => {
                 const g = onCourt(c);
-                if (!g || !window.confirm(`ยกเลิกคู่ที่ ${g.no || ''} ที่คอร์ด ${c + 1}? (กลับไปรอในคิว ไม่นับเกม)`)) return;
+                if (!g || !window.confirm(`ยกเลิกเกม ${g.no || ''} ที่คอร์ด ${c + 1}? (กลับไปรอในคิว ไม่นับเกม)`)) return;
                 update(s => ({ ...s, games: s.games.filter(x => x.start !== g.start), queue: [{ no: g.no, teams: g.teams, notes: [], locked: true }, ...s.queue] }));
             };
             // คอร์ดเดียว: ไม่ต้องกดเริ่ม/จบ แตะ "เล่นแล้ว" ที่คู่แรกในคิวทีเดียว (ระบบต้องรู้ว่าถึงคู่ไหน ตอนมีคนมา/กลับจะได้ไม่จัดคู่ที่เล่นไปแล้วใหม่)
@@ -1309,7 +1307,7 @@
             });
             // ย้อนคู่ล่าสุดที่เล่นไปแล้ว (กดผิด): กลับไปหัวคิวด้วยเลขเดิม ล็อกไว้
             const undoPlayed = g => {
-                if (!window.confirm(`ย้อนคู่ที่ ${g.no} กลับไปรอในคิว? (ไม่นับเป็นเกมที่เล่น)`)) return;
+                if (!window.confirm(`ย้อนเกม ${g.no} กลับไปรอในคิว? (ไม่นับเป็นเกมที่เล่น)`)) return;
                 update(s => ({ ...s, games: s.games.filter(x => x.start !== g.start), queue: [{ no: g.no, teams: g.teams, notes: [], locked: true }, ...s.queue] }));
             };
             const setCourts = n => {
@@ -1319,7 +1317,7 @@
             const setAhead = n => update(s => ({ ...s, ahead: n, queue: s.queue.filter((g, j) => j < n || g.locked) }));
             const toggleLock = k => update(s => ({ ...s, queue: s.queue.map((g, j) => j === k ? { ...g, locked: !g.locked } : g) }));
             const redrawGame = k => update(s => ({ ...s, queue: s.queue.map((g, j) => j === k ? { no: g.no } : g) }));   // ช่องว่าง เลขเดิม ให้จัดใหม่
-            const reset = () => { if (window.confirm('ล้างเช็กอินและประวัติเกมทั้งหมดของรอบนี้?')) update(() => ({ ...LIVE_EMPTY, courts: st.courts, ahead: st.ahead })); };
+            const reset = () => { if (window.confirm('ล้าง Check in และประวัติเกมทั้งหมดของรอบนี้?')) update(() => ({ ...LIVE_EMPTY, courts: st.courts, ahead: st.ahead })); };
 
             // แตะชื่อสองชื่อเพื่อสลับ: ในคิว↔ในคิว = สลับตำแหน่ง (ข้ามเกมได้), ในคิว↔คนที่ยังไม่มีคิว = เปลี่ยนคนลง เกมที่ถูกแก้จะล็อกไว้
             const isSel = x => sel && (x.id !== undefined ? sel.id === x.id : sel.q === x.q && sel.t === x.t && sel.i === x.i);
@@ -1387,9 +1385,9 @@
                             <button onClick={copy} className={`text-[15px] font-medium ${copied ? 'text-[#34C759]' : 'text-[#007AFF] active:opacity-70'}`}>{copied ? 'คัดลอกแล้ว' : 'คัดลอก'}</button>
                             <button onClick={() => onShare(text)} className="text-[15px] font-medium text-[#06C755] active:opacity-70">แชร์เข้า LINE</button>
                         </span>
-                    )}>จัดคู่หน้างาน</SectionTitle>
+                    )}>จัดคู่ตีแบด</SectionTitle>
                     <div className={`text-[12px] px-4 -mt-1 mb-2 ${sync === 'offline' || sync === 'error' ? 'text-[#FF9500]' : 'text-gray-400'}`}>
-                        {sync === 'loading' ? 'กำลังโหลดจากชีท...'
+                        {sync === 'loading' ? 'กำลังโหลด'
                             : sync === 'saving' ? 'กำลังบันทึก...'
                             : sync === 'offline' ? 'ออฟไลน์: เก็บไว้ในเครื่องก่อน ต่อเน็ตได้จะส่งให้เอง'
                             : sync === 'error' ? <button onClick={() => flush()} className="underline">บันทึกไม่สำเร็จ แตะเพื่อลองใหม่</button>
@@ -1400,8 +1398,8 @@
                     <div className="bg-white rounded-[20px] shadow-sm overflow-hidden">
                         <div className="p-4 border-b border-gray-200">
                             <div className="flex justify-between items-baseline mb-2">
-                                <span className="text-[13px] text-gray-500">แตะชื่อเมื่อมาถึงสนาม (มาก่อนได้ลงก่อน)</span>
-                                <span className="text-[13px] text-gray-500 tabular-nums whitespace-nowrap">Check in แล้ว {here.length} คน</span>
+                                <span className="text-[13px] text-gray-500">แตะชื่อเพื่อ Check in</span>
+                                <span className="text-[13px] text-gray-500 tabular-nums whitespace-nowrap">Check {here.length} คน</span>
                             </div>
                             <div className="flex flex-wrap gap-2">
                                 {here.map((c, i) => (
@@ -1419,23 +1417,23 @@
                                 ))}
                             </div>
                             <div className="flex flex-wrap gap-x-4 gap-y-2 mt-3">
-                                {notHere.length > 0 && <button onClick={checkInAll} className="text-[15px] font-medium text-[#34C759] active:opacity-70">เช็กอินทุกคน</button>}
+                                {notHere.length > 0 && <button onClick={checkInAll} className="text-[15px] font-medium text-[#34C759] active:opacity-70">Check in ทุกคน</button>}
                                 <button onClick={() => setPickWalkIn(true)} className="text-[15px] font-medium text-[#007AFF] active:opacity-70">+ walk-in</button>
                                 <button onClick={addGuest} className="text-[15px] font-medium text-[#FF9500] active:opacity-70">+ guest</button>
                             </div>
                             {unrated > 0 && <div className="text-[12px] text-gray-500 mt-2">? = ยังไม่ระบุระดับฝีมือ (คิดเป็น M) ตั้งได้ที่ จัดการข้อมูล &gt; สมาชิก</div>}
                         </div>
-                        <Stepper label="จำนวนคอร์ด" value={st.courts} min={1} max={4} onChange={setCourts} />
+                        <Stepper label="คอร์ด" value={st.courts} min={1} max={4} onChange={setCourts} />
                         {allIn(st) ? (
                             <div className="p-4 flex justify-between items-center gap-3">
                                 <div>
-                                    <div className="text-[17px] text-black">จัดคิวครบทั้งรอบ</div>
-                                    <div className="text-[13px] text-gray-500">ทุกคนที่ลงชื่อเช็กอินแล้ว · {hours} ชม. × {PAIR_PER_HOUR} คู่{st.courts > 1 ? ` × ${st.courts} คอร์ด` : ''}</div>
+                                    <div className="text-[17px] text-black">จัดคิวครบทุกเกม</div>
+                                    <div className="text-[13px] text-gray-500">Check in {here.length} คน x {hours} ชม. x {PAIR_PER_HOUR} เกม{st.courts > 1 ? ` x ${st.courts} คอร์ด` : ''}</div>
                                 </div>
-                                <span className="text-[17px] text-gray-500 tabular-nums">{st.queue.length} คู่</span>
+                                <span className="text-[17px] text-gray-500 tabular-nums">{st.queue.length} เกม</span>
                             </div>
                         ) : (
-                            <Stepper label="จัดคิวล่วงหน้า" value={st.ahead} min={1} max={6} onChange={setAhead} last />
+                            <Stepper label="จัดล่วงหน้า" value={st.ahead} min={1} max={6} onChange={setAhead} last />
                         )}
                     </div>
 
@@ -1447,7 +1445,7 @@
                             <div key={c} className="bg-white rounded-[20px] shadow-sm overflow-hidden mt-3">
                                 <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 flex justify-between items-center">
                                     <span className="text-[16px] font-semibold text-gray-700">คอร์ด {c + 1}</span>
-                                    {g ? <span className="text-[15px] font-semibold text-[#34C759]">กำลังเล่นคู่ที่ {g.no}</span> : <span className="text-[13px] text-gray-500">ว่าง</span>}
+                                    {g ? <span className="text-[15px] font-semibold text-[#34C759]">กำลังเล่นเกม {g.no}</span> : <span className="text-[13px] text-gray-500">ว่าง</span>}
                                 </div>
                                 {g ? (
                                     <div className="p-4">
@@ -1459,10 +1457,10 @@
                                     </div>
                                 ) : (
                                     <div className="p-4">
-                                        {ready !== -1 && first && <div className="text-[15px] text-gray-500 mb-2">คู่ที่ {st.queue[ready].no}: {team(st.queue[ready].teams[0])} vs {team(st.queue[ready].teams[1])}</div>}
+                                        {ready !== -1 && first && <div className="text-[15px] text-gray-500 mb-2">เกม {st.queue[ready].no}: {team(st.queue[ready].teams[0])} vs {team(st.queue[ready].teams[1])}</div>}
                                         <button onClick={() => startGame(c)} disabled={ready === -1}
                                             className="w-full py-2.5 rounded-[12px] bg-[#007AFF] text-white text-[16px] font-semibold active:opacity-80 disabled:bg-gray-100 disabled:text-gray-400 disabled:font-normal disabled:text-[15px]">
-                                            {ready === -1 ? (here.length < 4 ? `รอคนมาครบ 4 คน (ตอนนี้ ${here.length})` : 'รอคนว่างจากคอร์ดอื่น') : `เริ่มคู่ที่ ${st.queue[ready].no}`}
+                                            {ready === -1 ? (here.length < 4 ? `รอคนมาครบ 4 คน (ตอนนี้ ${here.length})` : 'รอคนว่างจากคอร์ดอื่น') : `เริ่มเกม ${st.queue[ready].no}`}
                                         </button>
                                     </div>
                                 )}
@@ -1473,14 +1471,14 @@
                     {/* คิวคู่ถัดไป */}
                     {(st.queue.length > 0 || bench.length > 0 || (oneCourt && done.length > 0)) && (
                         <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mt-3">
-                            <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 text-[16px] font-semibold text-gray-700">{oneCourt ? 'ตารางคู่' : 'คิวคู่ถัดไป'}</div>
+                            <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 text-[16px] font-semibold text-gray-700">{oneCourt ? 'ตารางเกม' : 'คิวเกมถัดไป'}</div>
                             {oneCourt && playedList.map((g, i) => (
                                 <React.Fragment key={'p' + g.start}>
                                 {hourOfNo(g.no) !== (i > 0 ? hourOfNo(playedList[i - 1].no) : -1) && (
                                     <div className="px-4 py-1.5 bg-gray-50 border-b border-gray-100 text-[12px] font-medium text-gray-500">ชั่วโมงที่ {hourOfNo(g.no) + 1}</div>
                                 )}
                                 <div className="px-4 py-2.5 border-b border-gray-100 flex items-center gap-2 text-[15px] text-gray-400">
-                                    <span className="w-9 shrink-0 text-center text-[17px] font-bold tabular-nums" aria-label={`คู่ที่ ${g.no} เล่นแล้ว`}>{g.no}</span>
+                                    <span className="w-9 shrink-0 text-center text-[17px] font-bold tabular-nums" aria-label={`เกม ${g.no} เล่นแล้ว`}>{g.no}</span>
                                     <span className="flex-1 min-w-0">✓ {team(g.teams[0])} vs {team(g.teams[1])}</span>
                                     {i === playedList.length - 1 && <button onClick={() => undoPlayed(g)} className="shrink-0 text-[14px] text-[#007AFF] active:opacity-70">ย้อน</button>}
                                 </div>
@@ -1493,7 +1491,7 @@
                                 )}
                                 <div className="px-4 py-3 border-b border-gray-100">
                                     <div className="flex items-start gap-2">
-                                        <span className="w-9 shrink-0 pt-0.5 text-center text-[17px] font-bold text-black tabular-nums" aria-label={`คู่ที่ ${g.no}`}>{g.no}</span>
+                                        <span className="w-9 shrink-0 pt-0.5 text-center text-[17px] font-bold text-black tabular-nums" aria-label={`เกม ${g.no}`}>{g.no}</span>
                                         <div className="flex-1 min-w-0">
                                             <div className="flex flex-wrap gap-1.5">{nameBtn(g.teams[0][0], { q: k, t: 0, i: 0 })}{nameBtn(g.teams[0][1], { q: k, t: 0, i: 1 })}</div>
                                             <div className="flex flex-wrap items-center gap-1.5 mt-1">
@@ -1504,7 +1502,7 @@
                                         <div className="shrink-0 flex items-center gap-1">
                                             <button onClick={() => toggleLock(k)} aria-label={g.locked ? 'ปลดล็อก' : 'ล็อก'}
                                                 className={`w-8 h-8 rounded-full text-[14px] flex items-center justify-center ${g.locked ? 'bg-amber-100' : 'bg-gray-100 opacity-50'}`}>{g.locked ? '🔒' : '🔓'}</button>
-                                            <button onClick={() => redrawGame(k)} aria-label="สุ่มคู่นี้ใหม่" className="w-8 h-8 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center active:opacity-70"><IconRefresh size={14} /></button>
+                                            <button onClick={() => redrawGame(k)} aria-label="สุ่มเกมนี้ใหม่" className="w-8 h-8 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center active:opacity-70"><IconRefresh size={14} /></button>
                                         </div>
                                     </div>
                                     {g.notes.map((x, i) => <div key={i} className="text-[12px] text-amber-700 mt-1 ml-11">⚠️ {x}</div>)}
@@ -1538,11 +1536,11 @@
                         <div className="bg-white rounded-[20px] shadow-sm overflow-hidden mt-3">
                             <div className="px-4 py-3 bg-gray-50/60 border-b border-gray-100 flex justify-between items-center">
                                 <span className="text-[16px] font-semibold text-gray-700">เล่นไปแล้ว</span>
-                                <span className="text-[15px] text-gray-500 tabular-nums">{done.length} คู่</span>
+                                <span className="text-[15px] text-gray-500 tabular-nums">{done.length} เกม</span>
                             </div>
                             {done.slice().sort((a, b) => b.start - a.start).map((g, i) => (
                                 <div key={g.start} className="px-4 py-2.5 border-b border-gray-100 last:border-0 flex items-center gap-3 text-[15px]">
-                                    <span className="text-gray-500 tabular-nums w-14 shrink-0">คู่ที่ {g.no}</span>
+                                    <span className="text-gray-500 tabular-nums w-14 shrink-0">เกม {g.no}</span>
                                     <span className="flex-1 min-w-0 text-black">{team(g.teams[0])} <span className="text-gray-400">vs</span> {team(g.teams[1])}</span>
                                     {i === 0 && <button onClick={() => undoPlayed(g)} className="shrink-0 text-[14px] text-[#007AFF] active:opacity-70">ย้อน</button>}
                                 </div>
@@ -1557,10 +1555,10 @@
                         <div className="fixed inset-0 z-[150] flex items-end justify-center bg-black/30" onClick={() => setAsk(null)}>
                             <div className="w-full max-w-md bg-[#F2F2F7] rounded-t-[20px] p-4 pb-8 sheet-in" onClick={e => e.stopPropagation()}>
                                 <div className="flex justify-between items-center mb-3">
-                                    <span className="text-[17px] font-semibold text-black">{ask.mode === 'edit' ? 'แก้' : 'เช็กอิน'} {ask.guest ? ask.guest.name : (byId[ask.id] || {}).label || nameOf(ask.id)}</span>
+                                    <span className="text-[17px] font-semibold text-black">{ask.mode === 'edit' ? 'แก้ไข' : 'Check in'} {ask.guest ? ask.guest.name : (byId[ask.id] || {}).label || nameOf(ask.id)}</span>
                                     <button onClick={() => setAsk(null)} className="text-[17px] text-[#007AFF]">ยกเลิก</button>
                                 </div>
-                                <input value={nick} onChange={e => setNick(e.target.value)} maxLength={20} placeholder="ชื่อเล่น (ไม่ใส่ก็ได้)" className={`${FIELD} bg-white mb-3`} />
+                                <input value={nick} onChange={e => setNick(e.target.value)} maxLength={20} placeholder="ชื่อเล่น" className={`${FIELD} bg-white mb-3`} />
                                 <div className="text-[13px] text-gray-500 mb-2">ฝีมือประมาณไหน</div>
                                 <div className="grid grid-cols-3 gap-2 mb-2">
                                     {[[1, 'มือใหม่'], [2, 'กลาง'], [3, 'เก่ง']].map(([v, label]) => (
@@ -1572,11 +1570,11 @@
                                     ))}
                                 </div>
                                 <button onClick={() => answerAsk(0)} className="w-full py-3 text-[15px] text-[#007AFF] active:opacity-70">
-                                    {ask.mode === 'edit' ? 'บันทึกชื่อ (ฝีมือเท่าเดิม)' : 'ข้าม (คิดเป็น M)'}
+                                    {ask.mode === 'edit' ? 'บันทึกชื่อ (ฝีมือเท่าเดิม)' : 'ข้าม (M)'}
                                 </button>
                                 {ask.mode === 'edit' && checkin(ask.id) && !checkin(ask.id).left && (
                                     <button onClick={() => { const id = ask.id; setAsk(null); leaveOrUndo(id, false); }} className="w-full py-3 text-[15px] text-[#FF3B30] active:opacity-70">
-                                        {gamesOf(ask.id) === 0 ? 'ยกเลิกเช็กอิน' : 'กลับบ้านแล้ว (ไม่จัดลงเกมอีก)'}
+                                        {gamesOf(ask.id) === 0 ? 'ยกเลิก Check in' : 'กลับแล้ว'}
                                     </button>
                                 )}
                             </div>
