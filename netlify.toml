@@ -1,5 +1,5 @@
 # Netlify: builds and publishes ONLY the web page (_site), so backend/*.gs is not served publicly.
-# Same build as .github/workflows/pages.yml, see scripts/build.mjs.
+# Build: scripts/build.mjs precompiles JSX + Tailwind into _site/index.html.
 [build]
   command = "npm ci && node scripts/build.mjs"
   publish = "_site"

@@ -4,7 +4,7 @@
 ข้อมูลทั้งหมดเก็บใน Google Sheets ไม่มีเซิร์ฟเวอร์ของตัวเอง
 
 ```
-LINE (LIFF)  ──►  index.html (GitHub Pages)  ──fetch POST──►  Apps Script Web App  ──►  Google Sheets
+LINE (LIFF)  ──►  index.html (Netlify)  ──fetch POST──►  Apps Script Web App  ──►  Google Sheets
                                                                    └──► LINE Messaging API (แจ้งแอดมิน)
 ```
 
@@ -52,7 +52,7 @@ Apps Script รวมทุกไฟล์ `.gs` ไว้ใน global เด�
 6. Deploy → New deployment → **Web app**: Execute as *Me*, Who has access *Anyone* แล้วคัดลอก URL ที่ลงท้าย `/exec`
 7. ใน `index.html` แก้ค่าด้านบน: `GAS_URL` (URL ข้อ 6), `LIFF_ID`, `POINT_URL`
    และใน `backend/Notify.gs` แก้ `LIFF_URL` ให้ตรงกับ LIFF ID
-8. LINE Developers: ตั้ง **Endpoint URL** ของ LIFF app เป็น URL ของหน้าเว็บ (เช่น `https://<user>.github.io/badminton/`)
+8. LINE Developers: ตั้ง **Endpoint URL** ของ LIFF app เป็น URL ของหน้าเว็บ (เช่น `https://t-jateebad.netlify.app/`) โดเมนเดียวเท่านั้น: ลิงก์ deploy preview ของ PR ล็อกอิน LINE ไม่ได้ (LINE ตอบ 400)
 9. ทดสอบจาก editor: `testNotify`, `testDailyNotify` (ส่งข้อความทดสอบถึงแอดมิน)
 
 ฟังก์ชันที่รันมือจาก editor ได้: `initialSetup`, `setupTriggers`, `migrateChecklist` (ย้ายเช็คลิสต์รอบเก่า), `testNotify`, `testDailyNotify`
@@ -83,7 +83,7 @@ clasp push                         # อัปโหลดโฟลเดอร�
 
 1. **Apps Script ก่อน** — `clasp push` (หรือวางโค้ดใหม่) แล้ว Deploy → Manage deployments → Edit → *New version*
    (ถ้ากด Save เฉย ๆ URL `/exec` เดิมยังรันโค้ดเก่า)
-2. **จากนั้นค่อย merge หน้าเว็บเข้า `main`** (Pages อัปเดตเองใน 1–2 นาที)
+2. **จากนั้นค่อย merge หน้าเว็บเข้า `main`** (Netlify build และอัปเดตเองใน 1–2 นาที)
 
 Backend ควรรองรับหน้าเว็บทั้งเวอร์ชันเก่าและใหม่ในช่วงเปลี่ยนผ่าน (ตัวอย่าง: `adminUpdateRegistrations` ยังรับรูปแบบเก่า `registrations`)
 
@@ -181,12 +181,10 @@ node tests/pairing.js
 `tests/pairing.js` ทดสอบตัวจัดคู่ด้วยการจำลองทั้งคืน (คนมา/กลับไม่พร้อมกัน, หลายคอร์ด, จัดทีละเกมและจัดคิวล่วงหน้า) ตัดโค้ดระหว่าง `// pairing:start` กับ `// pairing:end` ใน `index.html` มารันใน Node (ส่วนนี้ต้องเป็น JS ล้วน ไม่มี JSX)
 ไม่ได้ทดสอบการเขียนชีทจริงและ trigger — ต้องลองในระบบจริงหลัง deploy
 
-## GitHub Pages
+## Netlify
 
-ปัจจุบัน Pages เสิร์ฟทั้ง repo จาก branch `main` (ทำให้โค้ด backend เปิดอ่านได้ที่ `/backend/*.gs` ด้วย)
-ถ้าอยากเผยแพร่เฉพาะ `index.html`: ตั้ง repository variable `PAGES_VIA_ACTIONS` = `true` แล้วเปลี่ยน Settings → Pages → Source เป็น **GitHub Actions**
-(workflow [`pages.yml`](.github/workflows/pages.yml) จะ deploy เฉพาะหน้าเว็บ)
+Netlify build และเผยแพร่เฉพาะหน้าเว็บ (`_site`) ตาม [`netlify.toml`](netlify.toml) โค้ด backend จึงไม่ถูกเสิร์ฟออกไป ทุก PR ได้ deploy preview ไว้ดูหน้าตา (แต่ล็อกอิน LINE ไม่ได้)
 
-การ deploy ด้วย Actions จะ **build ล่วงหน้า** ด้วย [`scripts/build.mjs`](scripts/build.mjs): คอมไพล์ JSX และสร้าง CSS ของ Tailwind แล้วฝังในหน้าเดียว
+ตอน build จะใช้ [`scripts/build.mjs`](scripts/build.mjs): คอมไพล์ JSX และสร้าง CSS ของ Tailwind แล้วฝังในหน้าเดียว
 หน้าเว็บจึงไม่ต้องโหลดและรัน Babel + Tailwind CDN ในเบราว์เซอร์ทุกครั้ง (เปิดเร็วขึ้นโดยเฉพาะบนมือถือ) แก้ `index.html` ตามปกติ ไม่ต้อง build เอง
-ลองในเครื่อง: `npm ci && npm run build` ได้ไฟล์ `_site/index.html` ส่วน Pages แบบเสิร์ฟจาก branch ตรงๆ จะยังใช้ `index.html` ต้นฉบับ (ไม่ผ่านการ build)
+ลองในเครื่อง: `npm ci && npm run build` ได้ไฟล์ `_site/index.html`
