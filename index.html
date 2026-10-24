@@ -101,12 +101,15 @@
         };
         const cacheWrite = (name, data) => { try { localStorage.setItem('bm_' + name, JSON.stringify({ v: CACHE_VER, t: Date.now(), d: data })); } catch (e) {} };
         const cacheClear = (name) => { try { localStorage.removeItem('bm_' + name); } catch (e) {} };
-        // อ่านครั้งเดียวตอนโหลดหน้า ใช้เป็นค่าเริ่มต้นของ state ให้วาดหน้าแรกได้ทันที (หน้า public ไม่ใช้ข้อมูลผู้ใช้)
+        // อ่านครั้งเดียวตอนโหลดหน้า ใช้เป็นค่าเริ่มต้นของ state ให้วาดหน้าแรกได้ทันที
         const BOOT = (() => {
-            const isPublic = new URLSearchParams(window.location.search).get('public') === 'true';
-            const me = isPublic ? null : cacheRead('me');
+            const me = cacheRead('me');
             return { data: cacheRead('data'), me: me && me.user ? me : null };
         })();
+        // รอบที่ผู้ยังไม่ล็อกอินกดไว้ เปิดให้ต่อหลังกลับจากหน้า login ของ LINE (sessionStorage อยู่รอดการ redirect ในแท็บเดียวกัน)
+        const PENDING_KEY = 'bm_open';
+        const pendingRead = () => { try { return sessionStorage.getItem(PENDING_KEY); } catch (e) { return null; } };
+        const pendingWrite = (id) => { try { id ? sessionStorage.setItem(PENDING_KEY, id) : sessionStorage.removeItem(PENDING_KEY); } catch (e) {} };
 
         // ค่าเริ่มต้นของกติกา (ค่าจริงอ่านจากชีท Settings ชุดเดียวกับ backend/Rules.gs)
         const DEFAULT_RULES = {
@@ -864,65 +867,6 @@
                 </button>
             );
         };
-
-        // ===================== หน้า Public =====================
-        function PublicSessionView({ sessionInfos, rules }) {
-            const upcoming = sessionInfos
-                .filter(x => !x.info.isPast && !x.info.isCancelled)
-                .sort((a, b) => a.info.date - b.info.date);
-
-            return (
-                <div className="min-h-screen p-4 pb-16 pt-safe">
-                    <div className="max-w-md mx-auto space-y-6 pt-6">
-                        <div className="bg-white rounded-[20px] p-6 shadow-sm">
-                            <div className="text-center">
-                                <div className="text-5xl mb-3">🏸</div>
-                                <h1 className="text-[28px] font-bold text-black tracking-tight">{APP_NAME}</h1>
-                                <p className="text-[15px] text-gray-500 mt-1">รอบตีแบดที่เปิดรับ</p>
-                            </div>
-                            <div className="bg-[#F2F2F7] rounded-2xl p-5 mt-6">
-                                <h3 className="font-semibold text-black mb-3 text-[15px]">กติกาก๊วน</h3>
-                                <ol className="space-y-3 text-[14px] text-gray-600 list-decimal pl-5">
-                                    <li><b className="text-black">วันธรรมดา</b> ขั้นต่ำ {rules.WORKDAY_MIN_PLAYERS} คน รับสูงสุด {rules.WORKDAY_HOUR_CAP} คน ลงชื่อได้จนถึงวันเล่น</li>
-                                    <li><b className="text-black">วันหยุด</b> ไม่จำกัดจำนวน ปิดรับก่อนวันเล่น {rules.WEEKEND_CLOSE_DAYS} วัน ถ้าไม่ถึง {rules.WEEKEND_MIN_PLAYERS} คนจะงดรอบและแจ้งทาง LINE</li>
-                                    <li><b className="text-black">ค่าใช้จ่าย</b> ค่าคอร์ด + ลูกแบด หารตามจำนวนคน มากันเกิน {rules.COST_SPLIT_BASE} คนก็จ่ายเท่าราคาหาร {rules.COST_SPLIT_BASE}</li>
-                                    <li><b className="text-black">ติดธุระ</b> กดยกเลิกในระบบได้ตลอด เพื่อนจะได้เข้ามาแทน</li>
-                                </ol>
-                            </div>
-                        </div>
-
-                        <div className="space-y-3">
-                            {upcoming.length === 0 ? (
-                                <div className="bg-white rounded-[20px] p-6 text-center text-gray-500 shadow-sm">ยังไม่มีรอบตีเปิดรับตอนนี้</div>
-                            ) : upcoming.map(({ s, info }) => (
-                                <div key={s.Session_ID} className="bg-white rounded-[20px] p-4 shadow-sm">
-                                    <div className="flex items-start gap-3.5">
-                                        <DateTile date={info.date} />
-                                        <div className="flex-1 min-w-0">
-                                            <div className="font-semibold text-[17px] text-black truncate">{s.Location}</div>
-                                            <div className="text-[13px] text-gray-500">{fmtLong(info.date)} • {timeRange(info.isWorkday)}</div>
-                                        </div>
-                                        <span className={`shrink-0 text-[12px] font-semibold px-2.5 py-1 rounded-full ${TONES[info.badge.tone]}`}>{info.badge.text}</span>
-                                    </div>
-                                    <div className="mt-3.5 pl-[62px] space-y-1.5">
-                                        {info.isWorkday ? (
-                                            <WorkdayBars info={info} />
-                                        ) : (
-                                            <CapacityBar label="ขั้นต่ำ" count={info.regs.length} target={info.min} mode="min" />
-                                        )}
-                                        <div className="text-right text-[14px] font-semibold text-black pt-1">คนละ {info.costs.perHead} ฿</div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        <a href={LIFF_URL} className="block w-full bg-[#06C755] text-white text-center font-semibold text-[17px] py-3.5 rounded-[16px] shadow-sm active:opacity-80">
-                            ลงชื่อผ่าน LINE
-                        </a>
-                    </div>
-                </div>
-            );
-        }
 
         // ===================== หน้าจัดการข้อมูลแอดมิน (ชีท Sessions / Users / Registrations / Settings) =====================
         const toInputDate = v => {
@@ -2145,7 +2089,9 @@
             const [lineProfile, setLineProfile] = useState(BOOT.me ? BOOT.me.line : null);
             const [isAdminUser, setIsAdminUser] = useState(BOOT.me ? !!BOOT.me.user.isAdmin : false);
             const [authLoading, setAuthLoading] = useState(!BOOT.me);
-            const [publicViewMode, setPublicViewMode] = useState(false);
+            const [signedIn, setSignedIn] = useState(!!BOOT.me);      // ล็อกอิน LINE แล้ว (ยังไม่ล็อกอินก็ดูหน้าแรกได้ บังคับตอนกดเข้ารอบ)
+            const [showSetup, setShowSetup] = useState(false);        // หน้าตั้งค่าโปรไฟล์ครั้งแรก (ล็อกอินแล้วแต่ยังไม่มีโปรไฟล์)
+            const [pendingOpen, setPendingOpen] = useState(pendingRead); // รอบที่กดไว้ก่อนล็อกอิน/ตั้งค่าโปรไฟล์ เสร็จแล้วเปิดให้เอง
 
             // ---- ui ----
             const [loading, setLoading] = useState(!BOOT.data);
@@ -2344,13 +2290,6 @@
 
             // ---------- LIFF login ----------
             useEffect(() => {
-                const params = new URLSearchParams(window.location.search);
-                if (params.get('public') === 'true') {
-                    setPublicViewMode(true);
-                    setAuthLoading(false);
-                    fetchAllData();
-                    return;
-                }
                 // getAllData เป็นข้อมูลสาธารณะ ไม่ต้องใช้ token จึงยิงทันที ให้ Apps Script (รวม cold start) ทำงานคู่ขนานกับการโหลด LIFF
                 // ถ้า liff.login() พาออกไปหน้า LINE ผลที่ได้จะถูกทิ้งไปตามหน้าเดิม ไม่เสียหาย
                 fetchAllData();
@@ -2361,10 +2300,15 @@
                             new Promise((_, rej) => setTimeout(() => rej(new Error("LINE ตอบสนองช้า (liff.init timeout)")), 15000))
                         ]);
                         if (!liff.isLoggedIn()) {
-                            liff.login({ redirectUri: window.location.href });
+                            // ลิงก์รับแต้มต้องรู้ว่าใครกด จึงพาไปล็อกอินทันที นอกนั้นให้ดูหน้าแรกแบบยังไม่ล็อกอินไปก่อน
+                            if (claim) { liff.login({ redirectUri: window.location.href }); return; }
+                            cacheClear('me');
+                            setCurrentUser(null); setLineProfile(null); setIsAdminUser(false); setSignedIn(false);
+                            pendingWrite(null); setPendingOpen(null); // กลับมาโดยไม่ได้ล็อกอิน (กดย้อนกลับ) ไม่ต้องเปิดรอบค้างไว้
                             return;
                         }
                         liffReady = true;
+                        setSignedIn(true);
                         liffReadyResolve();
                         const decoded = liff.getDecodedIDToken && liff.getDecodedIDToken();
                         const uid = decoded && decoded.sub;
@@ -2383,6 +2327,7 @@
                             } else {
                                 setCurrentUser(null); setIsAdminUser(false); // ยังไม่มีโปรไฟล์ (หรือโปรไฟล์ถูกลบ)
                                 cacheClear('me');
+                                if (claim || pendingRead()) setShowSetup(true); // กดรอบ/การ์ดแต้มมาแล้ว ไปตั้งค่าโปรไฟล์ต่อเลย
                             }
                         } else {
                             setGlobalError(me.message);
@@ -2564,6 +2509,26 @@
                 setSelectedId(id);
             };
             const closeSession = () => { setSelectedId(null); setIsEditing(false); };
+            const login = () => liff.login({ redirectUri: window.location.href });
+            // กดเข้ารอบ: ยังไม่ล็อกอิน → ไปล็อกอิน LINE / ล็อกอินแล้วแต่ยังไม่มีโปรไฟล์ → ตั้งค่าโปรไฟล์ เสร็จแล้วเปิดรอบนั้นให้
+            const requestSession = (id) => {
+                if (currentUser) return openSession(id);
+                if (authLoading) return showToast('กำลังเข้าสู่ระบบ รอสักครู่', 'error');
+                scrollPositionRef.current = window.scrollY;
+                setPendingOpen(id);
+                pendingWrite(id);
+                if (signedIn) setShowSetup(true);
+                else login();
+            };
+            const closeSetup = () => { setShowSetup(false); setPendingOpen(null); pendingWrite(null); };
+            useEffect(() => {
+                if (!currentUser) return;
+                setShowSetup(false);
+                if (!pendingOpen) return;
+                setSelectedId(pendingOpen);
+                setPendingOpen(null);
+                pendingWrite(null);
+            }, [currentUser, pendingOpen]);
 
             const handleCreateProfile = async (name) => {
                 setSubmitting(true);
@@ -2707,18 +2672,16 @@
                 );
             }
 
-            // ผู้ใช้ใหม่ (ยังไม่มีโปรไฟล์) ต้องรอรายชื่อสมาชิกโหลดก่อน ไม่งั้นรายชื่อ "เลือกชื่อเดิม" จะว่างแล้วสร้างโปรไฟล์ซ้ำ
-            if (authLoading || (publicViewMode && loading) || (!publicViewMode && !currentUser && loading)) {
+            // หน้าตั้งค่าโปรไฟล์/รับแต้ม ต้องรอรายชื่อสมาชิกโหลดก่อน ไม่งั้นรายชื่อ "เลือกชื่อเดิม" จะว่างแล้วสร้างโปรไฟล์ซ้ำ
+            if ((claim && authLoading) || ((showSetup || claim) && !currentUser && loading)) {
                 return (
                     <div className="min-h-screen flex flex-col items-center justify-center gap-4">
                         <span className="text-5xl">🏸</span>
                         <IconLoader className="text-gray-400" />
-                        <p className="text-[15px] text-gray-500">{publicViewMode ? 'กำลังโหลด...' : 'กำลังเข้าสู่ระบบด้วย LINE...'}</p>
+                        <p className="text-[15px] text-gray-500">{authLoading ? 'กำลังเข้าสู่ระบบด้วย LINE...' : 'กำลังโหลด...'}</p>
                     </div>
                 );
             }
-
-            if (publicViewMode) return <PublicSessionView sessionInfos={sessionInfos} rules={rules} />;
 
             // ---------- หน้ารับแต้ม (เข้ามาจากการ์ด 08:30 วันถัดจากวันเล่น) ----------
             if (claim && currentUser) {
@@ -2753,17 +2716,23 @@
                 );
             }
 
-            // ---------- ตั้งค่าโปรไฟล์ครั้งแรก ----------
-            if (!currentUser) {
+            // ---------- ตั้งค่าโปรไฟล์ครั้งแรก (ตอนกดเข้ารอบ หรือกดการ์ดแต้ม) ----------
+            if ((showSetup || claim) && !currentUser) {
                 const unlinkedUsers = users
                     .filter(u => !u.Linked)
                     .filter(u => !searchUserQuery || String(u.DisplayName || "").toLowerCase().includes(searchUserQuery.toLowerCase()))
                     .sort((a, b) => String(a.DisplayName || "").localeCompare(String(b.DisplayName || ""), 'th'));
 
                 return (
-                    <div className="min-h-screen p-4 pt-12">
+                    <div className="min-h-screen relative p-4 pt-12">
                         <Toast message={toast.message} type={toast.type} />
                         {submitting && <GlobalLoader />}
+                        {!claim && (
+                            <button onClick={closeSetup} aria-label="กลับหน้าแรก" style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+                                className="absolute left-4 w-8 h-8 rounded-full bg-gray-200/80 flex items-center justify-center text-black active:opacity-70">
+                                <IconChevronLeft size={22} className="-ml-0.5" />
+                            </button>
+                        )}
                         <div className="w-full max-w-md mx-auto space-y-8">
                             <div className="flex flex-col items-center text-center">
                                 {lineProfile && lineProfile.picture
@@ -2838,10 +2807,32 @@
                                 {lineProfile && lineProfile.picture
                                     ? <img src={lineProfile.picture} alt="" className="w-[56px] h-[56px] rounded-full" />
                                     : <div className="w-[56px] h-[56px] bg-gray-100 rounded-full flex items-center justify-center text-3xl">🏸</div>}
-                                <div className="flex-1 min-w-0">
-                                    <div className="font-medium text-[20px] text-black truncate">{currentUser.DisplayName}</div>
-                                    <div className="text-[13px] text-gray-500">{isAdminUser ? 'แอดมิน' : 'สมาชิก'}</div>
-                                </div>
+                                {currentUser ? (
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-medium text-[20px] text-black truncate">{currentUser.DisplayName}</div>
+                                        <div className="text-[13px] text-gray-500">{isAdminUser ? 'แอดมิน' : 'สมาชิก'}</div>
+                                    </div>
+                                ) : authLoading ? (
+                                    <div className="flex-1 min-w-0 text-[15px] text-gray-500">กำลังเข้าสู่ระบบ...</div>
+                                ) : signedIn ? (
+                                    <>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-medium text-[20px] text-black truncate">{lineProfile ? lineProfile.name : ''}</div>
+                                            <div className="text-[13px] text-gray-500">ยังไม่ได้ตั้งค่าโปรไฟล์</div>
+                                        </div>
+                                        <button onClick={() => setShowSetup(true)}
+                                            className="shrink-0 px-4 h-8 rounded-full bg-[#007AFF] text-[15px] font-medium text-white active:opacity-80">ตั้งค่าโปรไฟล์</button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-medium text-[20px] text-black truncate">ยังไม่ได้เข้าสู่ระบบ</div>
+                                            <div className="text-[13px] text-gray-500">เข้าสู่ระบบด้วย LINE เพื่อลงชื่อ</div>
+                                        </div>
+                                        <button onClick={login}
+                                            className="shrink-0 px-4 h-8 rounded-full bg-[#06C755] text-[15px] font-medium text-white active:opacity-80">เข้าสู่ระบบ</button>
+                                    </>
+                                )}
                                 {isAdminUser && (
                                     <button onClick={() => { scrollPositionRef.current = 0; setShowAdminPage(true); refreshAdminData(); }}
                                         className="shrink-0 px-4 h-8 rounded-full bg-gray-200/80 text-[15px] font-medium text-black active:opacity-70">จัดการข้อมูล</button>
@@ -2867,7 +2858,7 @@
                                     </div>
                                 ) : homeList.upcoming.map(({ s, info: si }) => (
                                     <SessionCard key={s.Session_ID} s={s} info={si} rules={rules} myId={myId}
-                                        getUserName={getUserName} getUserPicture={getUserPicture} showTasks={isAdminUser} onOpen={() => openSession(s.Session_ID)} />
+                                        getUserName={getUserName} getUserPicture={getUserPicture} showTasks={isAdminUser} onOpen={() => requestSession(s.Session_ID)} />
                                 ))}
                             </div>
 
@@ -2877,7 +2868,7 @@
                                     <div className="flex flex-col gap-3">
                                         {homeList.past.map(({ s, info: si }) => (
                                             <SessionCard key={s.Session_ID} s={s} info={si} rules={rules} myId={myId}
-                                                getUserName={getUserName} getUserPicture={getUserPicture} showTasks={isAdminUser} onOpen={() => openSession(s.Session_ID)} />
+                                                getUserName={getUserName} getUserPicture={getUserPicture} showTasks={isAdminUser} onOpen={() => requestSession(s.Session_ID)} />
                                         ))}
                                     </div>
                                 </>
