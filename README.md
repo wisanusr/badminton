@@ -165,7 +165,7 @@ Backend ควรรองรับหน้าเว็บทั้งเวอ
 
 - ตัวตนผู้ใช้มาจาก **LINE ID token** ที่ตรวจกับ LINE ทุกครั้ง (cache ได้ไม่เกิน 10 นาที) ไม่เชื่อ user id ที่หน้าเว็บส่งมา
 - action ของแอดมินตรวจจาก `ADMIN_LINE_IDS` ฝั่ง server
-- `getAllData` เปิดให้อ่านโดยไม่ต้อง login (ใช้กับหน้า public) ข้อมูลที่ส่งออกคือรอบ รายชื่อ และชื่อผู้เล่น ไม่รวม LINE userId และไม่ส่ง `LINE_CHANNEL_ID`, `ADMIN_LINE_IDS` กับคีย์เก่าที่เลิกใช้แล้ว (`PRICE_*`, `MAX_WORKDAY_*`)
+- `getAllData` เปิดให้อ่านโดยไม่ต้อง login (หน้าแรกแสดงได้ก่อนล็อกอิน) ข้อมูลที่ส่งออกคือรอบ รายชื่อ และชื่อผู้เล่น ไม่รวม LINE userId และไม่ส่ง `LINE_CHANNEL_ID`, `ADMIN_LINE_IDS` กับคีย์เก่าที่เลิกใช้แล้ว (`PRICE_*`, `MAX_WORKDAY_*`)
 - `getAllData` ถูก cache 5 นาที และล้างทุกครั้งที่เขียนผ่าน API หรือ trigger
 - `getAllData` ส่งเฉพาะรอบข้างหน้า, รอบที่ผ่านไปไม่เกิน 30 วัน (`RECENT_DAYS` ใน `backend/Sheets.gs`) และรอบเก่ากว่านั้นที่ยังค้างเช็คลิสต์ ประวัติทั้งหมดแอดมินดึงผ่าน `adminGetHistory` ตอนเปิดหน้า "จัดการข้อมูล" (ไม่ผ่าน cache) ถ้าเพิ่มคอลัมน์เช็คลิสต์ใหม่ ต้องแก้ `CHECKLIST_TASKS` ให้ตรงกับ `TASKS` ใน `index.html`
 - ห้าม commit token/ความลับลง repo (ใช้ Script Properties)
