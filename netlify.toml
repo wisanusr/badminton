@@ -1,0 +1,8 @@
+# Netlify: builds and publishes ONLY the web page (_site), so backend/*.gs is not served publicly.
+# Same build as .github/workflows/pages.yml, see scripts/build.mjs.
+[build]
+  command = "npm ci && node scripts/build.mjs"
+  publish = "_site"
+
+[build.environment]
+  NODE_VERSION = "20"
