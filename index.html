@@ -408,7 +408,7 @@
                 const n = st.games[p.id] || 0;
                 const slots = Math.max(1, (clock - p.arrivedAt) / 60000 / PAIR_GAME_MIN);
                 const fair = quota ? [quota[p.id] > 0 ? 0 : 1, -(quota[p.id] || 0)] : [0, Math.round(10 * n / slots)];
-                return { id: p.id, order: p.order, streak, games: n, rank: [streak >= 2 ? 1 : 0, ...fair, n === 0 ? p.order : 1e6] };   // ยังไม่ได้เล่น: ก่อนคนที่เล่นแล้วเสมอ เรียงตามลำดับที่มา
+                return { id: p.id, order: p.order, streak, games: n, rank: [streak >= 2 ? streak : 0, ...fair, n === 0 ? p.order : 1e6] };   // เล่นติดตั้งแต่ 2 เกม: ยิ่งติดนานยิ่งไปท้าย (คนไม่พอ คนที่ติดนานสุดได้พักก่อน) ยังไม่ได้เล่น: ก่อนคนที่เล่นแล้วเสมอ เรียงตามลำดับที่มา
             }).sort((a, b) => pairCmp(a.rank, b.rank) || a.streak - b.streak || a.order - b.order);
         };
 

@@ -346,6 +346,20 @@ test('quota: 7 and 5 players share 48 places evenly, and the extra games go to t
   });
 });
 
+test('5 players: someone must play 3+ in a row, so the one on the longest run rests first (never more than 4 in a row)', () => {
+  // with 5 people only 1 rests per game; a fixed person resting made others play 6-8 in a row
+  [[12, 6], [10, 5]].forEach(([total, perHour]) => {
+    for (let seed = 1; seed <= 20; seed++) {
+      const players = queueWorld(EIGHT.slice(0, 5));
+      const q = planQueue({ players, games: [], now: 0, clock: 0, ahead: total, perHour, total, random: seeded(seed) });
+      const run = {};
+      let worst = 0;
+      q.forEach(g => players.forEach(p => { run[p.id] = ids(g).includes(p.id) ? (run[p.id] || 0) + 1 : 0; worst = Math.max(worst, run[p.id]); }));
+      assert(worst <= 4, `${total} games seed ${seed}: someone played ${worst} in a row`);
+    }
+  });
+});
+
 test('quota carries on from games already played (rule 4): the rest of the evening evens out', () => {
   for (let seed = 1; seed <= 10; seed++) {
     const players = queueWorld();
